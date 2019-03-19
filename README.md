@@ -14,11 +14,11 @@ Want one? Sign up to preorder one now: https://goo.gl/forms/MPRosQnBkixg8Vhj2
 # Pinout Notes
 
 ## Led (APA102)
-	* data 5
-	* clock 4
+* data 5
+* clock 4
 
 ## D1 Mini (WeMos 4M)
-	* sck - D0 - 16 
-	* miso - D5 - 14
-	* mosi - D6 - 12
-	* ss - D7 - 13
+* sck - D0 - 16 
+* miso - D5 - 14
+* mosi - D6 - 12
+* ss - D7 - 13
