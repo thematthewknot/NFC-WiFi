@@ -1,3 +1,4 @@
+![Here's the board](https://i.imgur.com/lpjVlrc.jpg)
 # NFC-WiFi
 NFC reader with WiFi 
 This project joins a NFC reader(PN532) to a WeMos D1 Mini to allow for WiFi access.
