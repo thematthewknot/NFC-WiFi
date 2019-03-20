@@ -6,9 +6,17 @@
 #include <Adafruit_PN532.h>
 #include <Wire.h>
 #include <SPI.h>
+#include <WiFiManager.h>
+#include <ESP8266WiFi.h>
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
 
-const uint8_t dataPin = 5;
+WiFiServer server(80);
+
+String header;
+
 const uint8_t clockPin = 4;
+const uint8_t dataPin = 5;
 
 #define PN532_SCK  (16)
 #define PN532_MOSI (12)
@@ -25,26 +33,26 @@ const uint8_t brightness = 1;
 void LED_Blue()
 {
 	ledStrip.startFrame();
- 	ledStrip.sendColor(0,0,255,1); 
- 	ledStrip.endFrame(1); 
+	ledStrip.sendColor(0,0,255,1); 
+	ledStrip.endFrame(1); 
 }
 void LED_Green()
 {
 	ledStrip.startFrame();
- 	ledStrip.sendColor(0,255,0,1); 
- 	ledStrip.endFrame(1); 
+	ledStrip.sendColor(0,255,0,1); 
+	ledStrip.endFrame(1); 
 }
 void LED_Red()
 {
 	ledStrip.startFrame();
- 	ledStrip.sendColor(255,0,0,1); 
- 	ledStrip.endFrame(1); 
+	ledStrip.sendColor(255,0,0,1); 
+	ledStrip.endFrame(1); 
 }
 void LED_Off()
 {
 	ledStrip.startFrame();
- 	ledStrip.sendColor(0,0,0,1); 
- 	ledStrip.endFrame(1); 
+	ledStrip.sendColor(0,0,0,1); 
+	ledStrip.endFrame(1); 
 }
 
 
@@ -67,6 +75,10 @@ void setup()
 
 	nfc.SAMConfig();
 	LED_Off();
+
+	WiFiManager wifiManager;
+	wifiManager.autoConnect("NFC_WiFi");
+	server.begin();
 	Serial.println("End Of Setup Loop");
 }
 
@@ -74,7 +86,59 @@ void setup()
 
 
 void loop() {  
-	nfcread(); // just for testing to make sure LED/NFC board are working
+	WiFiClient client = server.available();  
+	if (client) {                            
+	    Serial.println("New Client.");          
+	    String currentLine = "";             
+	    while (client.connected()) {         
+	      if (client.available()) {             
+	        char c = client.read();           
+	        Serial.write(c);                    
+	        header += c;
+	        if (c == '\n') {                   
+
+	          if (currentLine.length() == 0) {
+	           	client.println("HTTP/1.1 200 OK");
+				client.println("Content-type:text/html");
+				client.println("Connection: close");
+				client.println();
+				client.println("<!DOCTYPE html><html>");
+				client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+				client.println("<link rel=\"icon\" href=\"data:,\">");
+				client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
+				client.println(".button { background-color: #195B6A; border: none; color: white; padding: 16px 40px;");
+				client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
+				client.println(".button2 {background-color: #77878A;}</style></head>");
+				client.println("<body><h1>NFC WiFi </h1>");
+				client.println("<p>Place NFC tag over reader and click to register Tag 1 </p>");
+				client.println("<p><a href=\"/tag1/register\"><button class=\"button\">Tag 1</button></a></p>");
+				client.println("<form action=//www.html.am/html-codes/textboxes/submitted.cfm>");
+				client.println("<textarea name=myTextBox cols=50rows=1>");
+				client.println("Enter URL to trigger for Tag 1");
+				client.println("</textarea>");
+				client.println("<br />");
+				client.println("<input type=submit />");
+				client.println("</form>");
+				client.println("<p><a href=\"/run\"><button class=\"button\">Run</button></a></p>");
+				client.println("</body></html>");
+	            client.println();
+	            break;
+	          } else { 
+	            currentLine = "";
+	          }
+	        } else if (c != '\r') {  
+	          currentLine += c;     
+	        }
+	      }
+	    }
+	    header = "";
+	    client.stop();
+	    Serial.println("Client disconnected.");
+	    Serial.println("");
+	  }
+	  else{
+		//nfcread(); // just for testing to make sure LED/NFC board are working
+	}
 }
 
 void nfcread(){
