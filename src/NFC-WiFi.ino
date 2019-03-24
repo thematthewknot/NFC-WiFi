@@ -10,6 +10,7 @@
 #include <ESP8266WiFi.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
+#include <string.h>
 
 WiFiServer server(80);
 
@@ -23,7 +24,9 @@ const uint8_t dataPin = 5;
 #define PN532_SS   (13)
 #define PN532_MISO (14)
 
-
+static bool GoToRun = false;
+uint8_t uid1[] = { 0, 0, 0, 0, 0, 0, 0 }; 
+String uidstr = "";
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 APA102<dataPin, clockPin> ledStrip;
 
@@ -102,6 +105,16 @@ void loop() {
 				client.println("Content-type:text/html");
 				client.println("Connection: close");
 				client.println();
+				if (header.indexOf("GET /run") >= 0) {
+	              	Serial.println("Entering run");
+	              	GoToRun = true;
+              		nfcread();
+              	}
+              	else if(header.indexOf("GET /record1") >=0) {
+              		Serial.println("entering record1\n");
+              		Record1();
+              	}
+
 				client.println("<!DOCTYPE html><html>");
 				client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
 				client.println("<link rel=\"icon\" href=\"data:,\">");
@@ -111,7 +124,8 @@ void loop() {
 				client.println(".button2 {background-color: #77878A;}</style></head>");
 				client.println("<body><h1>NFC WiFi </h1>");
 				client.println("<p>Place NFC tag over reader and click to register Tag 1 </p>");
-				client.println("<p><a href=\"/tag1/register\"><button class=\"button\">Tag 1</button></a></p>");
+				client.println("<p><a href=\"/record1\"><button class=\"button\">Tag 1</button></a></p>");
+				client.println("<p>Tag1 = "+uidstr+"</p>");
 				client.println("<form action=//www.html.am/html-codes/textboxes/submitted.cfm>");
 				client.println("<textarea name=myTextBox cols=50rows=1>");
 				client.println("Enter URL to trigger for Tag 1");
@@ -136,10 +150,41 @@ void loop() {
 	    Serial.println("Client disconnected.");
 	    Serial.println("");
 	  }
-	  else{
-		//nfcread(); // just for testing to make sure LED/NFC board are working
+	  
+	if(GoToRun){
+		nfcread();
+	    
 	}
 }
+void Record1(){
+	uint8_t success;
+  	uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+    
+	  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+	  // 'uid' will be populated with the UID, and uidLength will indicate
+	  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+  	success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid1, &uidLength);
+  
+  	if (success) {
+	    // Display some basic information about the card
+	    Serial.println("Found an ISO14443A card");
+	    Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
+	    Serial.print("  UID Value: ");
+	    nfc.PrintHex(uid1, uidLength);
+	    Serial.println("");
+	    for (int i=0;i<uidLength;i++)
+	    {
+	    	uidstr = uidstr + uid1[i];
+
+	    }
+	}
+
+}
+
+
+
+
+
 
 void nfcread(){
 	uint8_t success;
@@ -159,14 +204,13 @@ void nfcread(){
 	    nfc.PrintHex(uid, uidLength);
 	    Serial.println("");
 	    
-	    byte a[4] = {0xB7, 0x55, 0x77, 0x89};
 	    
 		if (uidLength == 4)
 		{
 		    bool isMatch= false;
 		    for(int j = 0; j <4; j++)
 		    {	
-		    	if(uid[j]!=a[j])
+		    	if(uid[j]!=uid1[j])
 		    	{
 		    		isMatch = true;
 		    	}
@@ -241,7 +285,7 @@ void nfcread(){
 	    	bool isMatch= false;
 		    for(int j = 0; j <7; j++)
 		    {	
-		    	if(uid[j]!=a[j])
+		    	if(uid[j]!=uid1[j])
 		    	{
 		    		isMatch = true;
 		    	}
