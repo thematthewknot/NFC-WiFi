@@ -15,12 +15,15 @@
 ESP8266WebServer server(80);
 
 String header;
-
+const byte url1size = 500;
 struct {
-	uint val =0;
-	char url1[500] = "";
+	uint url1len = 0;
+	char url1[url1size] = "";
 	uint8_t uid1[7] = "";
+	uint uid1len = 0;
 } data;
+
+
 
 const uint8_t clockPin = 4;
 const uint8_t dataPin = 5;
@@ -42,11 +45,10 @@ const uint8_t brightness = 1;
 
 String webPage,notice;
 
-
-
-
 	
-const char MAIN_page[]PROGMEM=R"=====(	<!DOCTYPE html><html>
+
+
+const char MAIN_page1[]PROGMEM=R"=====(	<!DOCTYPE html><html>
 	<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 	<link rel=\"icon\" href=\"data:,\">
 	<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}
@@ -57,8 +59,13 @@ const char MAIN_page[]PROGMEM=R"=====(	<!DOCTYPE html><html>
 	<p>Click register button and then place NFC tag over reader</p>
 	<form action="/record1" method="get">
   	<button type="submit">Register</button><br></form>
-	<p>Tag1 = "++"</p>
-	<p>URL1 = <iframe name="URL1" width="10" height="10" frameBorder="0"></iframe></p>
+	<p>Tag1 = ")=====";
+
+const char MAIN_page2[]PROGMEM=R"=====("</p>
+	<p>URL1 = ")=====";
+
+
+const char MAIN_page3[]PROGMEM=R"=====("</p>
 	<FORM METHOD="POST"action="/submitURL1">
     <input type="text" name="myText" value="Tag1 URL...">
 	<input type="submit" value="Submit">
@@ -67,7 +74,6 @@ const char MAIN_page[]PROGMEM=R"=====(	<!DOCTYPE html><html>
 	<form action="/run" method="get">
   	<button type="submit">Run</button><br>
 	</body></html>)=====";
-
 
 
 
@@ -81,16 +87,18 @@ void setup()
 	EEPROM.put(addr,data);
 	EEPROM.commit();  
 	EEPROM.get(addr,data);
-	for (int i=0;i<7;i++)
+
+	for (int i=0;i<data.uid1len ;i++)
 	{
 		uid1str = uid1str + data.uid1[i];
 	}
-	for (int i=0;i<500;i++)
+		
+
+	for (int i=0;i<data.url1len;i++)
 	{
 		url1str = url1str + data.url1[i];
 	}
-
-
+	
 
 	Serial.println("Hello!");
 
@@ -141,85 +149,11 @@ void url1submit()
 
 void handleRoot() {
  Serial.println("You called root page");
- String s = MAIN_page; //Read HTML contents
+ String s = MAIN_page1+uid1str+MAIN_page2+url1str+MAIN_page3; //Read HTML contents
  server.send(200, "text/html", s); //Send web page
 }
 
 
-void website(WiFiClient client)
-{
-		Serial.println("New Client.");
-		String currentLine = "";
-		while (client.connected()) {
-		  if (client.available()) {
-			char c = client.read();
-			Serial.write(c);
-			header += c;
-			if (c == '\n') {
-
-				if (currentLine.length() == 0) {
-				client.println("HTTP/1.1 200 OK");
-				client.println("Content-type:text/html");
-				client.println("Connection: close");
-				client.println();
-				if (header.indexOf("GET /run") >= 0) {
-					Serial.println("Entering run");
-					GoToRun = true;
-					nfcread();
-				}
-				else if(header.indexOf("GET /record1") >=0) {
-					Serial.println("entering record1\n");
-					Record1();
-				}
-				else if(header.indexOf("GET /submitURL1") >=0) {
-					Serial.println("entering submitURL1\n");
-					Serial.println(header[1]);
-					url1str = header.substring(26);
-	
-					//url1str = url1str.substring(0,url1str.indexOf('HTTP/1.1')-2);
-					int tempPos = int(url1str.indexOf('%0D'))-2;
-					Serial.println("split pos is: "+tempPos);
-					//url1str.remove(tempPos);
-
-					saveURL(url1str);
-				}
-				client.println("<!DOCTYPE html><html>");
-				client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-				client.println("<link rel=\"icon\" href=\"data:,\">");
-				client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
-				client.println(".button { background-color: #195B6A; border: none; color: white; padding: 16px 40px;");
-				client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
-				client.println(".button2 {background-color: #77878A;}</style></head>");
-				client.println("<body><h1>NFC WiFi </h1>");
-				client.println("<p>Click register button and then place NFC tag over reader</p>");
-				client.println("<p><a href=\"/record1\"><button class=\"button\">Register</button></a></p>");
-				client.println("<p>Tag1 = "+uid1str+"</p>");
-				client.println("<p>URL1 = "+url1str+"</p>");
-				client.println("<form action=/submitURL1>");
-				client.println("<textarea name=myTextBox cols=50rows=1>");
-				client.println("Enter URL to trigger for Tag 1");
-				client.println("</textarea>");
-				client.println("<br />");
-				client.println("<input type=submit />");
-				client.println("</form>");
-				client.println("<p>Once you've registered the tag and enter a URL hit Run and the reader will be working</p>");
-				client.println("<p><a href=\"/run\"><button class=\"button\">Run</button></a></p>");
-				client.println("</body></html>");
-				client.println();
-				break;
-				} else { 
-					currentLine = "";
-				}
-				} else if (c != '\r') {
-				  currentLine += c; 
-				}
-			}
-		}
-		header = "";
-		client.stop();
-		Serial.println("Client disconnected.");
-		Serial.println("");
-}
 
 void Record1(){
 	uint8_t success;
@@ -241,6 +175,7 @@ void Record1(){
 			{
 				uid1str = uid1str + data.uid1[i];
 			}
+			data.uid1len = uidLength;
 			
 			EEPROM.put(0,data);
 			EEPROM.commit();
@@ -251,18 +186,19 @@ void Record1(){
 }
 
 void saveURL(String url1str){
+
 			Serial.println("Here the URL1 being saved:"+url1str);
  			server.send(200, "text/html", url1str); //Send web page
-
+ 			data.url1len = url1str.length();
 			for (int i=0;i<url1str.length();i++)
 			{ 
 				data.url1[i] = url1str[i] ;
 			}
-			for (int i=0;i<500;i++)
+			for (int i=0;i<url1size;i++)
 			{
 			url1str = url1str + data.url1[i];
 			}
-			// for (int i = URL1.length(); i < 500; i++)
+			// for (int i = url1str.length(); i < url1size; i++)
 			// {
 			// 	data.url1[i] = 0;
 			// }
