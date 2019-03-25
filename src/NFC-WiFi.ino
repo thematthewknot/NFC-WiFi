@@ -12,15 +12,13 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
 #include <EEPROM.h>
-//#include <string.h>
-
-WiFiServer server(80);
+ESP8266WebServer server(80);
 
 String header;
 
 struct {
 	uint val =0;
-	char url1[200] = "";
+	char url1[500] = "";
 	uint8_t uid1[7] = "";
 } data;
 
@@ -42,54 +40,52 @@ APA102<dataPin, clockPin> ledStrip;
 const uint16_t ledCount = 1;
 const uint8_t brightness = 1;
 
-void LED_Blue()
-{
-	ledStrip.startFrame();
-	ledStrip.sendColor(0,0,255,1);
-	ledStrip.endFrame(1); 
-}
-void LED_Green()
-{
-	ledStrip.startFrame();
-	ledStrip.sendColor(0,255,0,1);
-	ledStrip.endFrame(1); 
-}
-void LED_Red()
-{
-	ledStrip.startFrame();
-	ledStrip.sendColor(255,0,0,1);
-	ledStrip.endFrame(1); 
-}
-void LED_Off()
-{
-	ledStrip.startFrame();
-	ledStrip.sendColor(0,0,0,1);
-	ledStrip.endFrame(1); 
-}
+String webPage,notice;
+
+
+
+
+	
+const char MAIN_page[]PROGMEM=R"=====(	<!DOCTYPE html><html>
+	<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+	<link rel=\"icon\" href=\"data:,\">
+	<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}
+	.button { background-color: #195B6A; border: none; color: white; padding: 16px 40px;
+	text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}
+	.button2 {background-color: #77878A;}</style></head>
+	<body><h1>NFC WiFi </h1>
+	<p>Click register button and then place NFC tag over reader</p>
+	<form action="/record1" method="get">
+  	<button type="submit">Register</button><br></form>
+	<p>Tag1 = "++"</p>
+	<p>URL1 = <iframe name="URL1" width="10" height="10" frameBorder="0"></iframe></p>
+	<FORM METHOD="POST"action="/submitURL1">
+    <input type="text" name="myText" value="Tag1 URL...">
+	<input type="submit" value="Submit">
+	</form>
+	<p>Once you've registered the tag and enter a URL hit Run and the reader will be working</p>
+	<form action="/run" method="get">
+  	<button type="submit">Run</button><br>
+	</body></html>)=====";
+
+
 
 
 void setup()
-{	Serial.begin(115200);
+{	
+	Serial.begin(115200);
+	
 	uint addr = 0;
-
-
 	EEPROM.begin(512);
 	EEPROM.get(addr,data);
-
-
-
 	EEPROM.put(addr,data);
-
 	EEPROM.commit();  
-
-
-
 	EEPROM.get(addr,data);
 	for (int i=0;i<7;i++)
 	{
 		uid1str = uid1str + data.uid1[i];
 	}
-	for (int i=0;i<200;i++)
+	for (int i=0;i<500;i++)
 	{
 		url1str = url1str + data.url1[i];
 	}
@@ -112,7 +108,11 @@ void setup()
 
 	nfc.SAMConfig();
 	LED_Off();
-
+	//server.on("/",handlePostForm);
+ 	server.on("/", handleRoot);      
+ 	server.on("/record1", Record1);
+ 	server.on("/submitURL1", url1submit);
+ 	server.on("/run", nfcread );
 	WiFiManager wifiManager;
 	wifiManager.autoConnect("NFC_WiFi");
 	server.begin();
@@ -123,21 +123,29 @@ void setup()
 
 
 void loop() {
-	WiFiClient client = server.available();
-	 if (client) {
-	 	website(client);
-		}
-		header = "";
-		client.stop();
-	//	Serial.println("Client disconnected.");
-//		Serial.println("");
-	
-	
-	while(GoToRun){
-		nfcread();
-		
-	}
+  server.handleClient();
 }
+
+
+void url1submit()
+{
+ notice=server.arg("myText");
+ Serial.println("Text Received, contents:");
+ Serial.println(notice);
+ if (notice != ""){
+ 	url1str = notice;
+ 	saveURL(url1str);
+ }
+ server.send(200,"text/html","url1str");
+}
+
+void handleRoot() {
+ Serial.println("You called root page");
+ String s = MAIN_page; //Read HTML contents
+ server.send(200, "text/html", s); //Send web page
+}
+
+
 void website(WiFiClient client)
 {
 		Serial.println("New Client.");
@@ -165,15 +173,15 @@ void website(WiFiClient client)
 				}
 				else if(header.indexOf("GET /submitURL1") >=0) {
 					Serial.println("entering submitURL1\n");
-					Serial.println(header);
-					String URL1 = header.substring(26);
-					URL1 = URL1.substring(0,URL1.indexOf('%0D')-2);
-					url1str = "";
-					for (int i=0;i<200;i++)
-					{
-					url1str = url1str + data.url1[i];
-					}
-					saveURL(URL1);
+					Serial.println(header[1]);
+					url1str = header.substring(26);
+	
+					//url1str = url1str.substring(0,url1str.indexOf('HTTP/1.1')-2);
+					int tempPos = int(url1str.indexOf('%0D'))-2;
+					Serial.println("split pos is: "+tempPos);
+					//url1str.remove(tempPos);
+
+					saveURL(url1str);
 				}
 				client.println("<!DOCTYPE html><html>");
 				client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
@@ -242,38 +250,60 @@ void Record1(){
 
 }
 
-void saveURL(String URL1){
-			Serial.println("Here the URL1 being saved:"+URL1);
+void saveURL(String url1str){
+			Serial.println("Here the URL1 being saved:"+url1str);
+ 			server.send(200, "text/html", url1str); //Send web page
 
-			for (int i=0;i<URL1.length();i++)
+			for (int i=0;i<url1str.length();i++)
 			{ 
-				data.url1[i] = URL1[i] ;
+				data.url1[i] = url1str[i] ;
 			}
-			for (int i = URL1.length(); i < 200; i++)
+			for (int i=0;i<500;i++)
 			{
-				data.url1[i] = 0;
+			url1str = url1str + data.url1[i];
 			}
+			// for (int i = URL1.length(); i < 500; i++)
+			// {
+			// 	data.url1[i] = 0;
+			// }
 			EEPROM.put(0,data);
 			EEPROM.commit();
 }
 
-void UseURL1(String URL1)
+void UseURL1(String url1str)
 {
-	Serial.println("made it to UserURL1");
-	HTTPClient http;
-	
-    http.begin(URL1);      //Specify request destination
-    Serial.println("going to send:" + URL1);   //Print HTTP return code
 
-    http.header("POST / HTTP/1.1");
-    http.header("Host: server_name");
-    http.header("Accept: */*");
-    http.header("Content-Type: application/x-www-form-urlencoded");
-    int httpCode = http.POST("Message from NFC-WiFi");   //Send the request
-    String payload = http.getString();                                        
-    Serial.println(httpCode);   //Print HTTP return code
-    Serial.println(payload);    //Print request response payload
-    http.end();  //Close connection
+    WiFiClient client;
+
+    HTTPClient http;
+
+    Serial.print("[HTTP] begin...\n");
+    if (http.begin(client, url1str)) {  // HTTP
+
+
+      Serial.print("[HTTP] GET...\n");
+      // start connection and send HTTP header
+      int httpCode = http.GET();
+
+      // httpCode will be negative on error
+      if (httpCode > 0) {
+        // HTTP header has been send and Server response header has been handled
+        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+        // file found at server
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+          String payload = http.getString();
+          Serial.println(payload);
+        }
+      } else {
+        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+      }
+
+      http.end();
+    } else {
+      Serial.printf("[HTTP} Unable to connect\n");
+    }
+
+
 }
 
 
@@ -405,3 +435,27 @@ void nfcread(){
 
 }
 
+void LED_Blue()
+{
+	ledStrip.startFrame();
+	ledStrip.sendColor(0,0,255,1);
+	ledStrip.endFrame(1); 
+}
+void LED_Green()
+{
+	ledStrip.startFrame();
+	ledStrip.sendColor(0,255,0,1);
+	ledStrip.endFrame(1); 
+}
+void LED_Red()
+{
+	ledStrip.startFrame();
+	ledStrip.sendColor(255,0,0,1);
+	ledStrip.endFrame(1); 
+}
+void LED_Off()
+{
+	ledStrip.startFrame();
+	ledStrip.sendColor(0,0,0,1);
+	ledStrip.endFrame(1); 
+}
