@@ -12,9 +12,10 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
 #include <EEPROM.h>
+#include <IFTTTMaker.h>
+
 ESP8266WebServer server(80);
 
-String header;
 const byte url1size = 500;
 struct {
 	uint url1len = 0;
@@ -33,7 +34,6 @@ const uint8_t dataPin = 5;
 #define PN532_SS   (13)
 #define PN532_MISO (14)
 
-static bool GoToRun = false;
 uint8_t uid1[] = { 0, 0, 0, 0, 0, 0, 0 }; 
 String uid1str = "";
 String url1str = "";
@@ -43,7 +43,7 @@ APA102<dataPin, clockPin> ledStrip;
 const uint16_t ledCount = 1;
 const uint8_t brightness = 1;
 
-String webPage,notice;
+String notice;
 
 	
 
@@ -83,9 +83,9 @@ void setup()
 	
 	uint addr = 0;
 	EEPROM.begin(512);
-	EEPROM.get(addr,data);
-	EEPROM.put(addr,data);
-	EEPROM.commit();  
+	// EEPROM.get(addr,data);
+	// EEPROM.put(addr,data);
+	// EEPROM.commit();  
 	EEPROM.get(addr,data);
 
 	for (int i=0;i<data.uid1len ;i++)
@@ -280,12 +280,15 @@ void nfcread(){
 				LED_Green();
 				UseURL1(url1str);
 				isMatch == false;
-				delay(1000);
+				delay(5000);
+				LED_Off();
 			}
 			if(isMatch == false)
 			{
 				LED_Red();
 				isMatch == false;
+				delay(3000);
+				LED_Off();
 			}
 		
 			Serial.println("Seems to be a Mifare Classic card (4 byte UID)");
@@ -343,12 +346,15 @@ void nfcread(){
 				UseURL1(url1str);
 
 				isMatch == false;
-				delay(1000);
+				delay(5000);
+				LED_Off();
 			}
 			if(isMatch == false)
 			{
 				LED_Red();
 				isMatch == false;
+				delay(3000);
+				LED_Off();
 			}
 			Serial.println("Seems to be a Mifare Ultralight tag (7 byte UID)");
 
