@@ -15,14 +15,14 @@
 
 ESP8266WebServer server(80);
 
-const byte url1size = 500;
-struct {
-	uint url1len = 1;
-	char url1[url1size] = "";
-	uint uid1len = 1;
-	uint8_t uid1[7] = "";
+// const byte url1size = 500;
+// struct {
+// 	uint url1len = 1;
+// 	char url1[url1size] = "";
+// 	uint uid1len = 1;
+// 	uint8_t uid1[7] = "";
 
-} data;
+// } data;
 
 
 
@@ -72,11 +72,10 @@ const char MAIN_page3[]PROGMEM=R"=====("</p>
 	</form>
 	<p>Once you've registered the tag and enter a URL hit Run and the reader will be working</p>
 	<form action="/run" method="get">
-  	<button type="submit">Run</button><br>
+  	<button type="submit">Run</button><br> 	
 	</body></html>)=====";
 
-
-
+String WebPage =""; 
 void setup()
 {	
 	Serial.begin(115200);
@@ -112,13 +111,26 @@ void setup()
 	nfc.SAMConfig();
 	LED_Off();
 	//server.on("/",handlePostForm);
- 	server.on("/", handleRoot);      
- 	server.on("/record1", Record1);
- 	server.on("/submitURL1", url1submit);
- 	server.on("/run", nfcread );
+ 	WebPage= MAIN_page1+uid1str+MAIN_page2+url1str+MAIN_page3;
+
+ 	server.on("/", [](){  
+ 		Serial.println("You called root page");
+ 		server.send(200,"text/html",WebPage);
+ 		});      
+ 	server.on("/run", nfcread);
+ 	server.on("/submitURL1", [](){ 
+ 		url1submit();
+ 		UpdateWebPage();
+ 		server.send(200,"text/html",WebPage);
+ 		});
+ 	server.on("/record1", [](){ 
+   		Record1();
+   		UpdateWebPage();
+    	server.send(200, "text/html", WebPage);
+   		});
+	server.begin();
 	WiFiManager wifiManager;
 	wifiManager.autoConnect("NFC_WiFi");
-	server.begin();
 	Serial.println("End Of Setup Loop");
 }
 
@@ -129,6 +141,9 @@ void loop() {
   server.handleClient();
 }
 
+void printtest(){
+	Serial.println("madeit!!!");
+}
 
 void url1submit()
 {
@@ -137,16 +152,10 @@ void url1submit()
  Serial.println(notice);
  if (notice != ""){
  	url1str = notice;
- 	saveURL(url1str);
+ 	spiffsWrite("/url1str", notice);
  }
- server.send(200,"text/html","url1str");
 }
 
-void handleRoot() {
- Serial.println("You called root page");
- String s = MAIN_page1+uid1str+MAIN_page2+url1str+MAIN_page3; //Read HTML contents
- server.send(200, "text/html", s); //Send web page
-}
 
 
 
@@ -176,18 +185,8 @@ void Record1(){
 	}
 	
 	LED_Off();
-
 }
 
-void saveURL(String url1str){
-
-			Serial.println("Here the URL1 being saved:"+url1str);
- 			server.send(200, "text/html", url1str); //Send web page
-
-
-			spiffsWrite("/url1str", url1str);
-
-}
 
 void UseURL1(String url1str)
 {
@@ -222,9 +221,12 @@ void UseURL1(String url1str)
       Serial.printf("[HTTP} Unable to connect\n");
     }
 
-
+	UpdateWebPage();
 }
 
+void UpdateWebPage(){
+	 	WebPage = MAIN_page1+uid1str+MAIN_page2+url1str+MAIN_page3;
+}
 
 void nfcread(){
 	while(true){
