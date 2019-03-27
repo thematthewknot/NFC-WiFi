@@ -1,27 +1,27 @@
 // NFC-WiFi board simple program 2018 Matt Varian
 // https://github.com/thematthewknot/NFC-WiFi
 // released under the GPLv3 license.
-
+#include <FS.h>
+#include <WiFiManager.h>
 #include <APA102.h>
 #include <Adafruit_PN532.h>
 #include <Wire.h>
 #include <SPI.h>
-#include <WiFiManager.h>
 #include <ESP8266WiFi.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
-#include <EEPROM.h>
-#include <IFTTTMaker.h>
+//#include <IFTTTMaker.h>
 
 ESP8266WebServer server(80);
 
 const byte url1size = 500;
 struct {
-	uint url1len = 0;
+	uint url1len = 1;
 	char url1[url1size] = "";
+	uint uid1len = 1;
 	uint8_t uid1[7] = "";
-	uint uid1len = 0;
+
 } data;
 
 
@@ -34,9 +34,9 @@ const uint8_t dataPin = 5;
 #define PN532_SS   (13)
 #define PN532_MISO (14)
 
-uint8_t uid1[] = { 0, 0, 0, 0, 0, 0, 0 }; 
-String uid1str = "";
-String url1str = "";
+uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 }; 
+String uid1str = "Not Set";
+String url1str = "Not Set";
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 APA102<dataPin, clockPin> ledStrip;
 
@@ -80,26 +80,21 @@ const char MAIN_page3[]PROGMEM=R"=====("</p>
 void setup()
 {	
 	Serial.begin(115200);
-	
-	uint addr = 0;
-	EEPROM.begin(512);
-	// EEPROM.get(addr,data);
-	// EEPROM.put(addr,data);
-	// EEPROM.commit();  
-	EEPROM.get(addr,data);
+	bool result = SPIFFS.begin();
+ 	
 
-	for (int i=0;i<data.uid1len ;i++)
-	{
-		uid1str = uid1str + data.uid1[i];
+
+	if ( ! SPIFFS.exists("/uid1str") ) {
+		spiffsWrite("/uid1str", "Not Set");
 	}
-		
+	uid1str = spiffsRead("/uid1str");
 
-	for (int i=0;i<data.url1len;i++)
-	{
-		url1str = url1str + data.url1[i];
+	if ( ! SPIFFS.exists("/url1str") ) {
+		spiffsWrite("/url1str", "Not Set");
 	}
-	
+	url1str = spiffsRead("/url1str");
 
+	
 	Serial.println("Hello!");
 
 	nfc.begin();
@@ -156,32 +151,31 @@ void handleRoot() {
 
 
 void Record1(){
+	LED_Blue();
 	uint8_t success;
 	uint8_t uidLength;	
 	uid1str = "";
 
 	bool waitforread = true;
 	while(waitforread){
-		success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, data.uid1, &uidLength);
+		success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
 
 		if (success) {
 			waitforread = false;
 			Serial.println("Found an ISO14443A card");
 			Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
 			Serial.print("  UID Value: ");
-			nfc.PrintHex(data.uid1, uidLength);
+			nfc.PrintHex(uid, uidLength);
 			Serial.println("");
-			for (int i=0;i<uidLength;i++)
-			{
-				uid1str = uid1str + data.uid1[i];
-			}
-			data.uid1len = uidLength;
-			
-			EEPROM.put(0,data);
-			EEPROM.commit();
+
+			for (int i = 0; i < uidLength;i++)
+				uid1str = uid1str + uid[i];
+			spiffsWrite("/uid1str", uid1str);
 
 		}
 	}
+	
+	LED_Off();
 
 }
 
@@ -189,21 +183,10 @@ void saveURL(String url1str){
 
 			Serial.println("Here the URL1 being saved:"+url1str);
  			server.send(200, "text/html", url1str); //Send web page
- 			data.url1len = url1str.length();
-			for (int i=0;i<url1str.length();i++)
-			{ 
-				data.url1[i] = url1str[i] ;
-			}
-			for (int i=0;i<url1size;i++)
-			{
-			url1str = url1str + data.url1[i];
-			}
-			// for (int i = url1str.length(); i < url1size; i++)
-			// {
-			// 	data.url1[i] = 0;
-			// }
-			EEPROM.put(0,data);
-			EEPROM.commit();
+
+
+			spiffsWrite("/url1str", url1str);
+
 }
 
 void UseURL1(String url1str)
@@ -244,37 +227,41 @@ void UseURL1(String url1str)
 
 
 void nfcread(){
+	while(true){
 	uint8_t success;
 	uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };	// Buffer to store the returned UID
 	uint8_t uidLength;							// Length of the UID (4 or 7 bytes depending on ISO14443A card type)
 	
-
 	success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
 
 	if (success) {
 		Serial.println("Found an ISO14443A card");
 		Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
 		Serial.print("  UID Value: ");
-		nfc.PrintHex(data.uid1, uidLength);
+		nfc.PrintHex(uid, uidLength);
 		Serial.println("");
 		
+		String readuid = "";
+		for(int i=0;i<uidLength;i++)
+		{
+			readuid = readuid + uid[i];
+		}
 		
 		if (uidLength == 4)
 		{
 			bool isMatch= false;
-			for(int j = 0; j <4; j++)
-			{	
-				if(uid[j]==data.uid1[j])
+
+
+				if(readuid==uid1str)
 				{
 					isMatch = true;
 				}
 				else
 				{
 					isMatch =false;
-					break;
 				}
 
-			}
+		
 			if(isMatch == true)
 			{
 				LED_Green();
@@ -328,18 +315,21 @@ void nfcread(){
 		if (uidLength == 7)
 		{ 
 			bool isMatch= false;
-			for(int j = 0; j <7; j++)
-			{	
-				if(uid[j]==data.uid1[j])
-				{
-					isMatch = true;
-				}
-				else
-				{
-					isMatch =false;
-					break;
-				}
-			}    
+
+			String readuid = "";
+			for(int i=0;i<uidLength;i++)
+			{
+				readuid = readuid + uid[i];
+			}
+			if(readuid==uid1str)
+			{
+				isMatch = true;
+			}
+			else
+			{
+				isMatch =false;
+			}
+
 			if(isMatch == true)
 			{
 				LED_Green();
@@ -375,6 +365,19 @@ void nfcread(){
 		}
 	}
 
+}
+}
+
+void spiffsWrite(String path, String contents) {
+	File f = SPIFFS.open(path, "w");
+	f.print(contents);
+	f.close();
+}
+String spiffsRead(String path) {
+	File f = SPIFFS.open(path, "r");
+	String x = f.readStringUntil('\n');
+	f.close();
+	return x;
 }
 
 void LED_Blue()
