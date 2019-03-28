@@ -11,19 +11,45 @@
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
-//#include <IFTTTMaker.h>
+#include <WiFiClientSecure.h>
+
+
+
+class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
+  public:
+    SPIFFSCertStoreFile(const char *name) {
+      _name = name;
+    };
+    virtual ~SPIFFSCertStoreFile() override {};
+    // The main API
+    virtual bool open(bool write = false) override {
+      _file = SPIFFS.open(_name, write ? "w" : "r");
+      return _file;
+    }
+    virtual bool seek(size_t absolute_pos) override {
+      return _file.seek(absolute_pos, SeekSet);
+    }
+    virtual ssize_t read(void *dest, size_t bytes) override {
+      return _file.readBytes((char*)dest, bytes);
+    }
+    virtual ssize_t write(void *dest, size_t bytes) override {
+      return _file.write((uint8_t*)dest, bytes);
+    }
+    virtual void close() override {
+      _file.close();
+    }
+private:
+    File _file;
+    const char *_name;
+};
+SPIFFSCertStoreFile certs_idx("/certs.idx");
+SPIFFSCertStoreFile certs_ar("/certs.ar");
+
+
+
+
 
 ESP8266WebServer server(80);
-
-// const byte url1size = 500;
-// struct {
-// 	uint url1len = 1;
-// 	char url1[url1size] = "";
-// 	uint uid1len = 1;
-// 	uint8_t uid1[7] = "";
-
-// } data;
-
 
 
 const uint8_t clockPin = 4;
@@ -34,9 +60,17 @@ const uint8_t dataPin = 5;
 #define PN532_SS   (13)
 #define PN532_MISO (14)
 
+
+
 uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 }; 
 String uid1str = "Not Set";
 String url1str = "Not Set";
+String IFTTTKey = "Not Set";
+String IFTTTEvent1 = "Not Set";
+//String host = "maker.ifttt.com";
+//int httpsPort = 443;
+//char fingerprint[] = "AA:75:CB:41:2E:D5:F9:97:FF:5D:A0:8B:7D:AC:12:21:08:4B:00:8C";
+
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 APA102<dataPin, clockPin> ledStrip;
 
@@ -46,8 +80,6 @@ const uint8_t brightness = 1;
 String notice;
 
 	
-
-
 const char MAIN_page1[]PROGMEM=R"=====(	<!DOCTYPE html><html>
 	<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 	<link rel=\"icon\" href=\"data:,\">
@@ -57,7 +89,7 @@ const char MAIN_page1[]PROGMEM=R"=====(	<!DOCTYPE html><html>
 	.button2 {background-color: #77878A;}</style></head>
 	<body><h1>NFC WiFi </h1>
 	<p>Click register button and then place NFC tag over reader</p>
-	<form action="/record1" method="get">
+	<form action="/uid1rec" method="get">
   	<button type="submit">Register</button><br></form>
 	<p>Tag1 = ")=====";
 
@@ -123,15 +155,21 @@ void setup()
  		UpdateWebPage();
  		server.send(200,"text/html",WebPage);
  		});
- 	server.on("/record1", [](){ 
-   		Record1();
+ 	server.on("/uid1rec", [](){ 
+   		uid1record();
    		UpdateWebPage();
     	server.send(200, "text/html", WebPage);
    		});
 	server.begin();
 	WiFiManager wifiManager;
 	wifiManager.autoConnect("NFC_WiFi");
+
+	
+
+
 	Serial.println("End Of Setup Loop");
+
+
 }
 
 
@@ -141,9 +179,6 @@ void loop() {
   server.handleClient();
 }
 
-void printtest(){
-	Serial.println("madeit!!!");
-}
 
 void url1submit()
 {
@@ -156,10 +191,7 @@ void url1submit()
  }
 }
 
-
-
-
-void Record1(){
+void uid1record(){
 	LED_Blue();
 	uint8_t success;
 	uint8_t uidLength;	
@@ -186,42 +218,72 @@ void Record1(){
 	
 	LED_Off();
 }
-
-
 void UseURL1(String url1str)
 {
-
-    WiFiClient client;
-
+	setClock();
     HTTPClient http;
+    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+    BearSSL::CertStore certStore;
+    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
+    client->setCertStore(&certStore);
+    Serial.println(numCerts);
+    http.begin(dynamic_cast<WiFiClient&>(*client), url1str);
+    int httpCode = http.GET();
+    Serial.println(httpCode);
 
-    Serial.print("[HTTP] begin...\n");
-    if (http.begin(client, url1str)) {  // HTTP
+    /*
 
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
 
-      Serial.print("[HTTP] GET...\n");
-      // start connection and send HTTP header
-      int httpCode = http.GET();
+  // Use WiFiClientSecure class to create TLS connection
+  WiFiClientSecure client;
+  Serial.print("connecting to ");
+  Serial.println(host);
 
-      // httpCode will be negative on error
-      if (httpCode > 0) {
-        // HTTP header has been send and Server response header has been handled
-        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
-        // file found at server
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-          String payload = http.getString();
-          Serial.println(payload);
-        }
-      } else {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-      }
+  Serial.printf("Using fingerprint '%s'\n", fingerprint);
+  client.setFingerprint(fingerprint);
 
-      http.end();
-    } else {
-      Serial.printf("[HTTP} Unable to connect\n");
+  if (!client.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+  String url = url1str;
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "User-Agent: BuildFailureDetectorESP8266\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("request sent");
+  while (client.connected()) {
+    String line = client.readStringUntil('\n');
+    if (line == "\r") {
+      Serial.println("headers received");
+      break;
     }
-
-	UpdateWebPage();
+  }
+  String line = client.readStringUntil('\n');
+  if (line.startsWith("{\"state\":\"success\"")) {
+    Serial.println("esp8266/Arduino CI successfull!");
+  } else {
+    Serial.println("esp8266/Arduino CI has failed");
+  }
+  Serial.println("reply was:");
+  Serial.println("==========");
+  Serial.println(line);
+  Serial.println("==========");
+  Serial.println("closing connection");
+  */
 }
 
 void UpdateWebPage(){
@@ -405,4 +467,20 @@ void LED_Off()
 	ledStrip.startFrame();
 	ledStrip.sendColor(0,0,0,1);
 	ledStrip.endFrame(1); 
+}
+
+void setClock() {
+  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP time sync: ");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("");
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  Serial.print("Current time: ");
+  Serial.print(asctime(&timeinfo));
 }
