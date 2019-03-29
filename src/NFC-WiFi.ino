@@ -39,7 +39,7 @@ class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
     virtual void close() override {
       _file.close();
     }
-private:
+  private:
     File _file;
     const char *_name;
 };
@@ -61,10 +61,10 @@ const uint8_t dataPin = 5;
 #define PN532_SS   (13)
 #define PN532_MISO (14)
 #define VERSION      1
+#define MAXNUMTAGS  10
 
 
-
-uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 }; 
+uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
 //String uid1str = "Not Set";
 //String url1str = "Not Set";
 //String IFTTTKey = "Not Set";
@@ -81,8 +81,9 @@ const uint8_t brightness = 1;
 
 String notice;
 File fsUploadFile;              // a File object to temporarily store the received file
-
-
+bool startScanning = false;
+bool justDoOnce = true;
+int numTags = 1;
 
 const char * header = R"(<!DOCTYPE html>
 <html>
@@ -94,7 +95,7 @@ const char * header = R"(<!DOCTYPE html>
 <body>
 <div id="top">
   <span id="title">NFC-WiFi</span>
-  <a href="/">Controls</a>
+  <a href="/">Tags</a>
   <a href="/setup">Setup</a>
   <a href="/debug">Debug</a>
   <a href="/update">Update</a>
@@ -105,6 +106,7 @@ const char * header = R"(<!DOCTYPE html>
 
 
 void spiffsWrite(String, String);
+String storedTags[MAXNUMTAGS] = {};
 String spiffsRead(String);
 void LED_Off();
 void LED_Blue();
@@ -112,7 +114,6 @@ void LED_Red();
 void LED_Green();
 void UIDrecord(int);
 void UseURL1(String);
-void nfcread();
 void setClock();
 void send302(String);
 
@@ -126,21 +127,18 @@ void setup()
   if ( ! SPIFFS.exists("/uid1str") ) {
     spiffsWrite("/uid1str", "Not Set");
   }
- // uid1str = spiffsRead("/uid1str");
-
   if ( ! SPIFFS.exists("/url1str") ) {
     spiffsWrite("/url1str", "Not Set");
   }
- // url1str = spiffsRead("/url1str");
   if ( ! SPIFFS.exists("/uid2str") ) {
     spiffsWrite("/uid2str", "Not Set");
   }
-//  uid2str = spiffsRead("/uid2str");
-
   if ( ! SPIFFS.exists("/url2str") ) {
     spiffsWrite("/url2str", "Not Set");
   }
-//  url2str = spiffsRead("/url2str");
+  if ( ! SPIFFS.exists("/numTags") ) {
+    spiffsWrite("/numTags", "2");
+  }
 
   
   Serial.println("Hello!");
@@ -165,7 +163,7 @@ server.on("/update", HTTP_GET, [&](){
     String content = header;
     content += ("<h1>Update</h1>");
 
- 
+
     content += R"(
       <h2>Update cert from a file</h2>
       <p>Run this python script, and upload the cert.ar file if need be(or you can upload your own if you want)</p>
@@ -177,40 +175,40 @@ server.on("/update", HTTP_GET, [&](){
       </form>
     )";
 
-    server.send(200, "text/html", content);
-  });
-  // handler for the /update form POST (once file upload finishes)
-  server.on("/update", HTTP_POST, [&](){
-    server.sendHeader("Connection", "close");
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
-  },[&](){
-    // handler for the file upload, get's the sketch bytes, and writes
-    // them through the Update object
-    HTTPUpload& upload = server.upload();
-  if(upload.status == UPLOAD_FILE_START){
+server.send(200, "text/html", content);
+});
+// handler for the /update form POST (once file upload finishes)
+server.on("/update", HTTP_POST, [&]() {
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+}, [&]() {
+  // handler for the file upload, get's the sketch bytes, and writes
+  // them through the Update object
+  HTTPUpload& upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
     String filename = upload.filename;
-    if(!filename.startsWith("/")) filename = "/"+filename;
+    if (!filename.startsWith("/")) filename = "/" + filename;
     Serial.print("handleFileUpload Name: "); Serial.println(filename);
     fsUploadFile = SPIFFS.open(filename, "w");            // Open the file for writing in SPIFFS (create if it doesn't exist)
     filename = String();
-  } else if(upload.status == UPLOAD_FILE_WRITE){
-    if(fsUploadFile)
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (fsUploadFile)
       fsUploadFile.write(upload.buf, upload.currentSize); // Write the received bytes to the file
-  } else if(upload.status == UPLOAD_FILE_END){
-    if(fsUploadFile) {                                    // If the file was successfully created
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (fsUploadFile) {                                   // If the file was successfully created
       fsUploadFile.close();                               // Close the file again
       Serial.print("handleFileUpload Size: "); Serial.println(upload.totalSize);
-      server.sendHeader("Location","/success.html");      // Redirect the client to the success page
+      server.sendHeader("Location", "/success.html");     // Redirect the client to the success page
       server.send(303);
     } else {
       server.send(500, "text/plain", "500: couldn't create file");
     }
   }
-    delay(0);
-  });
-  server.on("/style.css", [&](){
-    server.send(200, "text/css",R"(
+  delay(0);
+});
+server.on("/style.css", [&]() {
+  server.send(200, "text/css", R"(
       html {
         font-family:sans-serif;
         background-color:black;
@@ -246,21 +244,24 @@ server.on("/update", HTTP_GET, [&](){
         margin:0px !important;
       }
     )");
-  });
-  server.on("/", [&](){
-//    if (captivePortal()) { // If caprive portal redirect instead of displaying the page.
-   //   return;
+});
+server.on("/", [&]() {
+  //    if (captivePortal()) { // If caprive portal redirect instead of displaying the page.
+  //   return;
   //  }
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.sendHeader("Pragma", "no-cache");
-    server.sendHeader("Expires", "-1");
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "-1");
 
-    String content = header;
+  String content = header;
 
-  
-    content += R"(
+
+  content += R"(
       </select>
       <!-- <button type="submit">Set</button> -->
+      <form method="POST" id="Run" action="/RunScan">
+        <button type="submit">Run</button>
+      </form>    
      <h4>Tag 1</h4>
       <form method="POST" id="UIDrec" action="/UIDrec">
         <input name="1" placeholder="Not Set" value=")" + spiffsRead("/uid1str") + R"(">
@@ -286,47 +287,63 @@ server.on("/update", HTTP_GET, [&](){
      
              
     )";
-    server.send(200, "text/html", content);
-  });  
-  server.on("/UIDrec", HTTP_POST, [&](){
-      String tempUIDIndex = server.argName(0);
-      int uidindex =tempUIDIndex.toInt();
-      UIDrecord(uidindex);
-      send302("/");
-  });
-
-  server.on("/URLrec", HTTP_POST, [&](){
-     String tempUIDIndex = server.argName(0);
-     int urlIndex =tempUIDIndex.toInt();
-     spiffsWrite("/url"+String(urlIndex)+"str",server.arg(tempUIDIndex));
-     send302("/");
-  });
+  server.send(200, "text/html", content);
+});
+server.on("/RunScan", HTTP_POST, [&]() {
+    startScanning = true;
 
 
+
+  numTags = spiffsRead("/numTags").toInt();      
+  for(int i=0;i<numTags;i++)
+  {
+      storedTags[i]=spiffsRead("/uid"+String(i)+"str");
+  }
  
-  
  
-  server.on("/setup", [&](){
-    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.sendHeader("Pragma", "no-cache");
-    server.sendHeader("Expires", "-1");
-    server.sendHeader("Content-Length", "-1");
-    server.send(200, "text/html", header);
+
     
-    server.sendContent("\
+});
+
+server.on("/UIDrec", HTTP_POST, [&]() {
+  String tempUIDIndex = server.argName(0);
+  int uidindex = tempUIDIndex.toInt();
+  UIDrecord(uidindex);
+  send302("/");
+});
+
+server.on("/URLrec", HTTP_POST, [&]() {
+  String tempUIDIndex = server.argName(0);
+  int urlIndex = tempUIDIndex.toInt();
+  spiffsWrite("/url" + String(urlIndex) + "str", server.arg(tempUIDIndex));
+  send302("/");
+});
+
+
+
+
+
+server.on("/setup", [&]() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "-1");
+  server.sendHeader("Content-Length", "-1");
+  server.send(200, "text/html", header);
+
+  server.sendContent("\
       <h1>Setup</h1>\
       <h4>Nearby networks</h4>\
       <table>\
       <tr><th>Name</th><th>Security</th><th>Signal</th></tr>\
     ");
-    Serial.println("[httpd] scan start");
-    int n = WiFi.scanNetworks();
-    Serial.println("[httpd] scan done");
-    for (int i = 0; i < n; i++) {
-      server.sendContent(String() + "\r\n<tr onclick=\"document.getElementById('ssidinput').value=this.firstChild.firstChild.innerHTML; setTimeout(function(){ document.getElementById('pskinput').focus(); }, 100);\"><td><a href=\"#setup-wifi\">" + WiFi.SSID(i) + "</a></td><td>" + String((WiFi.encryptionType(i) == ENC_TYPE_NONE)?"Open":"Encrypted") + "</td><td>" + WiFi.RSSI(i) + "dBm</td></tr>");
-    }
-    server.sendContent(String() + "\
+  Serial.println("[httpd] scan start");
+  int n = WiFi.scanNetworks();
+  Serial.println("[httpd] scan done");
+  for (int i = 0; i < n; i++) {
+    server.sendContent(String() + "\r\n<tr onclick=\"document.getElementById('ssidinput').value=this.firstChild.firstChild.innerHTML; setTimeout(function(){ document.getElementById('pskinput').focus(); }, 100);\"><td><a href=\"#setup-wifi\">" + WiFi.SSID(i) + "</a></td><td>" + String((WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "Open" : "Encrypted") + "</td><td>" + WiFi.RSSI(i) + "dBm</td></tr>");
+  }
+  server.sendContent(String() + "\
       </table>\
       <h4>Connect to a network</h4>\
       <form method='POST' id='setup-wifi' action='/setup/wifi'>\
@@ -336,107 +353,49 @@ server.on("/update", HTTP_GET, [&](){
       </form>\
     ");
 
-    server.sendContent(String() + R"(
-      <h4>Device setup</h4>
+  server.sendContent(String() + R"(
+      <h4>Device Name</h4>
       <form method="POST" id="setup-device" action="/setup/device">
         <input name="name" placeholder="Device name" value=")" + spiffsRead("/name") + R"(">
         <button type="submit">Save</button>
       </form>
     )");
 
-    server.client().stop();
-  });
-  
-  server.on("/setup/device", HTTP_POST, [&](){
-    Serial.print("[httpd] Device settings post. ");
-    spiffsWrite("/name", server.arg("name"));
-    
-    send302("/setup?saved");
-    Serial.println("done.");
-  });
-  server.on("/debug", [&](){
-    String content = header;
-    content += ("<h1>About</h1><ul>");
+  server.client().stop();
+});
 
-    unsigned long uptime = millis();
-    content += (String("<li>Version ") + VERSION + "</li>");
-    content += (String("<li>Booted about ") + (uptime/60000) + " minutes ago (" + ESP.getResetReason() + ")</li>");
-    content += ("</ul>");
-  
-    content += (R"(
-      <h2>Debugging buttons (don't touch)</h2>
+server.on("/setup/device", HTTP_POST, [&]() {
+  Serial.print("[httpd] Device settings post. ");
+  spiffsWrite("/name", server.arg("name"));
 
-      <form method='POST' action='/debug/reset'>
-        <button type='submit'>Restart</button>
-      </form>
-    )");
-    server.send(200, "text/html", content);
-  });
- /* server.on("/debug/lowpowermode", [&](){
-    //send302("/debug?done");
-   // state.lowPowerMode = !(state.lowPowerMode);
-  });*/
-  server.on("/debug/reset", [&](){
-    send302("/debug?done");
-//    doRestartDevice = true;
-  });
- // server.on("/debug/sleepforever", [&](){
-  //  send302("/debug?done");    
- // });
- // server.on("/debug/disconnect", [&](){
- //   send302("/debug?done");
- //   delay(500);
- //   WiFi.disconnect();
- // });
-  server.on("/debug/test", [&](){
-   /*  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    server.send(200, "text/html", "Testing stuff... ");
+  send302("/setup?saved");
+  Serial.println("done.");
+});
+server.on("/debug", [&]() {
+  String content = header;
+  content += ("<h1>About</h1><ul>");
 
-   uint32_t flashChipSize = ESP.getFlashChipSize();
-   String platform = "generic";
-    if ( flashChipSize == 4194304 ) {
-      platform = "nodemcu"; //HACK HACK HACK
-    }
-    String url = String("http://update.pixilic.com/hoopla.ino.") + platform + ".bin";
-    String versionHeader = String("{\"flashChipSize\":") + String("ghjk") + ", \"version\":" + String("hjk") + ", \"name\":\"" + String("devHostName") + "\"}";
-    server.sendContent(url);
-    server.sendContent(versionHeader);
+  unsigned long uptime = millis();
+  content += (String("<li>Version ") + VERSION + "</li>");
+  content += (String("<li>Booted about ") + (uptime / 60000) + " minutes ago (" + ESP.getResetReason() + ")</li>");
+  content += ("</ul>");
 
-    server.sendContent("done.");
-    server.client().stop();
-    */
-  });
-  server.on("/version.json", [&](){
-    server.send(200, "text/html", String("1"));
-    server.client().stop();
-  });
+
+  server.send(200, "text/html", content);
+});
+
+server.on("/version.json", [&]() {
+  server.send(200, "text/html", String("1"));
+  server.client().stop();
+});
 //  server.onNotFound ( handleNotFound );
-  server.begin(); // Web server start
-
-/*
-  server.on("/", [](){  
-    Serial.println("You called root page");
-    server.send(200,"text/html",WebPage);
-    });      
-  server.on("/run", nfcread);
-  server.on("/submitURL1", [](){ 
-    url1submit();
-    UpdateWebPage();
-    server.send(200,"text/html",WebPage);
-    });
-  server.on("/uid1rec", [](){ 
-      uid1record();
-      UpdateWebPage();
-      server.send(200, "text/html", WebPage);
-      });
-  server.begin();*/
-  WiFiManager wifiManager;
-  wifiManager.autoConnect("NFC_WiFi");
-
-  
+server.begin(); // Web server start
 
 
-  Serial.println("End Of Setup Loop");
+WiFiManager wifiManager;
+wifiManager.autoConnect("NFC_WiFi");
+
+Serial.println("End Of Setup Loop");
 
 
 }
@@ -445,35 +404,91 @@ server.on("/update", HTTP_GET, [&](){
 
 
 void loop() {
-  server.handleClient();
+  
+if(startScanning){
+
+  uint8_t success;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+  uint8_t uidLength;              // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+  
+  
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+  
+  if (success) {
+    //Serial.println("Found an ISO14443A card");
+    //Serial.print("  UID Length: ");    Serial.print(uidLength, DEC);   Serial.println(" bytes");
+    //Serial.print("  UID Value: ");   
+    //nfc.PrintHex(uid, uidLength);   
+    //Serial.println("");
+    String readuid = "";
+    for(int i=0;i<uidLength;i++)
+    {
+      readuid = readuid + uid[i];
+    }
+    Serial.println(readuid);
+   
+    bool isMatch= false;
+    for(int i=0;i<numTags;i++)
+    {
+        Serial.println("DEBUG list:"+storedTags[i]);
+       
+        if(readuid==storedTags[i])
+        {
+          isMatch = true;
+          break;
+        }
+               
+    }
+    
+
+      if(isMatch == true)
+      {
+        LED_Green();
+       // UseURL1(url1str);
+        delay(5000);
+        LED_Off();
+      }
+      if(isMatch == false)
+      {
+        LED_Red();
+        delay(3000);
+        LED_Off();
+      }
+
+ 
+      
+  }
+}
+else
+  {
+   server.handleClient();
+  }
 }
 
 
-
-
-void UIDrecord(int index_num){
+void UIDrecord(int index_num) {
   LED_Blue();
   uint8_t success;
-  uint8_t uidLength;  
+  uint8_t uidLength;
   String tempstr = "";
   bool waitforread = true;
-  while(waitforread){
+  while (waitforread) {
     success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
 
     if (success) {
       waitforread = false;
       Serial.println("Found an ISO14443A card");
-      Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
+      Serial.print("  UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
       Serial.print("  UID Value: ");
       nfc.PrintHex(uid, uidLength);
-      Serial.println(" saving to UID slot: "+ index_num);
-   Serial.println("*************"); 
-      for (int i = 0; i < uidLength;i++)
+      Serial.println(" saving to UID slot: " + index_num);
+      Serial.println("*************");
+      for (int i = 0; i < uidLength; i++)
         tempstr = tempstr + uid[i];
       Serial.print("using index:");
       Serial.println(index_num);
-      spiffsWrite("/uid"+String(index_num)+"str", tempstr);
-      
+      spiffsWrite("/uid" + String(index_num) + "str", tempstr);
+
     }
   }
   LED_Off();
@@ -484,31 +499,30 @@ void UIDrecord(int index_num){
 void UseURL1(String url1str)
 {
   setClock();
-    HTTPClient http;
-    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-    BearSSL::CertStore certStore;
-    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
-    client->setCertStore(&certStore);
-    Serial.println("numCerts: "+numCerts);
+  HTTPClient http;
+  BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+  BearSSL::CertStore certStore;
+  int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
+  client->setCertStore(&certStore);
+  Serial.println("numCerts: " + numCerts);
 
   if (numCerts == 0) {
     Serial.printf("No certs found. Did you run certs-from-mozill.py and upload the SPIFFS directory before running?\n");
     return; // Can't connect to anything w/o certs!
   }
-    Serial.println("calling: "+url1str);
-    http.begin(dynamic_cast<WiFiClient&>(*client), url1str);
-    int httpCode = http.GET();
-    Serial.println("httpCode"+httpCode);
+  Serial.println("calling: " + url1str);
+  http.begin(dynamic_cast<WiFiClient&>(*client), url1str);
+  int httpCode = http.GET();
+  Serial.println("httpCode" + httpCode);
 
 }
 
-/*
-void nfcread(){
-  while(true){
+ /* void runloop(){
+
   uint8_t success;
   uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
   uint8_t uidLength;              // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-  
+
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
 
   if (success) {
@@ -517,18 +531,16 @@ void nfcread(){
     Serial.print("  UID Value: ");
     nfc.PrintHex(uid, uidLength);
     Serial.println("");
-    
+
     String readuid = "";
     for(int i=0;i<uidLength;i++)
     {
       readuid = readuid + uid[i];
     }
-    
+
     if (uidLength == 4)
     {
       bool isMatch= false;
-
-
         if(readuid==uid1str)
         {
           isMatch = true;
@@ -538,7 +550,7 @@ void nfcread(){
           isMatch =false;
         }
 
-    
+
       if(isMatch == true)
       {
         LED_Green();
@@ -554,7 +566,7 @@ void nfcread(){
         delay(3000);
         LED_Off();
       }
-    
+
       Serial.println("Seems to be a Mifare Classic card (4 byte UID)");
 
 
@@ -569,7 +581,7 @@ void nfcread(){
         uint8_t nfcdata[16];
 
         success = nfc.mifareclassic_ReadDataBlock(4, nfcdata);
-        
+
         if (success)
         {
           Serial.println("Reading Block 4:");
@@ -588,11 +600,10 @@ void nfcread(){
         Serial.println("Ooops ... authentication failed: Try another key?");
       }
     }
-    
-    if (uidLength == 7)
-    { 
-      bool isMatch= false;
 
+    if (uidLength == 7)
+    {
+      bool isMatch= false;
       String readuid = "";
       for(int i=0;i<uidLength;i++)
       {
@@ -642,12 +653,12 @@ void nfcread(){
     }
   }
 
-}
-}
+  
+  }
 */
 void spiffsWrite(String path, String contents) {
-  Serial.println("SPIFFS Path:"+path);
-  Serial.println("SPIFFS contents:"+contents);
+  Serial.println("SPIFFS Path:" + path);
+  Serial.println("SPIFFS contents:" + contents);
   File f = SPIFFS.open(path, "w");
   f.print(contents);
   f.close();
@@ -662,26 +673,26 @@ String spiffsRead(String path) {
 void LED_Blue()
 {
   ledStrip.startFrame();
-  ledStrip.sendColor(0,0,255,1);
-  ledStrip.endFrame(1); 
+  ledStrip.sendColor(0, 0, 255, 1);
+  ledStrip.endFrame(1);
 }
 void LED_Green()
 {
   ledStrip.startFrame();
-  ledStrip.sendColor(0,255,0,1);
-  ledStrip.endFrame(1); 
+  ledStrip.sendColor(0, 255, 0, 1);
+  ledStrip.endFrame(1);
 }
 void LED_Red()
 {
   ledStrip.startFrame();
-  ledStrip.sendColor(255,0,0,1);
-  ledStrip.endFrame(1); 
+  ledStrip.sendColor(255, 0, 0, 1);
+  ledStrip.endFrame(1);
 }
 void LED_Off()
 {
   ledStrip.startFrame();
-  ledStrip.sendColor(0,0,0,1);
-  ledStrip.endFrame(1); 
+  ledStrip.sendColor(0, 0, 0, 1);
+  ledStrip.endFrame(1);
 }
 void send302(String dest) {
   server.sendHeader("Location", dest, true);
