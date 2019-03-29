@@ -65,10 +65,10 @@ const uint8_t dataPin = 5;
 
 
 uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 }; 
-String uid1str = "Not Set";
-String url1str = "Not Set";
-String IFTTTKey = "Not Set";
-String IFTTTEvent1 = "Not Set";
+//String uid1str = "Not Set";
+//String url1str = "Not Set";
+//String IFTTTKey = "Not Set";
+//String IFTTTEvent1 = "Not Set";
 //String host = "maker.ifttt.com";
 //int httpsPort = 443;
 //char fingerprint[] = "AA:75:CB:41:2E:D5:F9:97:FF:5D:A0:8B:7D:AC:12:21:08:4B:00:8C";
@@ -83,19 +83,6 @@ String notice;
 File fsUploadFile;              // a File object to temporarily store the received file
 
 
-int currentEffectId = 2;
-struct EffectState {
-  String color;
-  String nextColor;
-  bool boolEffectState;
-  int intEffectState;
-  int intEffectState2;
-  int intEffectState3;
-  unsigned long ulongEffectState;
-  unsigned long ulongEffectState2;
-  String currentPalette;
- // bool lowPowerMode;
-};
 
 const char * header = R"(<!DOCTYPE html>
 <html>
@@ -116,7 +103,6 @@ const char * header = R"(<!DOCTYPE html>
 
 
 
-String WebPage =""; 
 
 void spiffsWrite(String, String);
 String spiffsRead(String);
@@ -124,7 +110,7 @@ void LED_Off();
 void LED_Blue();
 void LED_Red();
 void LED_Green();
-void uid1record();
+void UIDrecord(int);
 void UseURL1(String);
 void nfcread();
 void setClock();
@@ -140,12 +126,21 @@ void setup()
   if ( ! SPIFFS.exists("/uid1str") ) {
     spiffsWrite("/uid1str", "Not Set");
   }
-  uid1str = spiffsRead("/uid1str");
+ // uid1str = spiffsRead("/uid1str");
 
   if ( ! SPIFFS.exists("/url1str") ) {
     spiffsWrite("/url1str", "Not Set");
   }
-  url1str = spiffsRead("/url1str");
+ // url1str = spiffsRead("/url1str");
+  if ( ! SPIFFS.exists("/uid2str") ) {
+    spiffsWrite("/uid2str", "Not Set");
+  }
+//  uid2str = spiffsRead("/uid2str");
+
+  if ( ! SPIFFS.exists("/url2str") ) {
+    spiffsWrite("/url2str", "Not Set");
+  }
+//  url2str = spiffsRead("/url2str");
 
   
   Serial.println("Hello!");
@@ -267,14 +262,25 @@ server.on("/update", HTTP_GET, [&](){
       </select>
       <!-- <button type="submit">Set</button> -->
      <h4>Tag 1</h4>
-      <form method="POST" id="uid1rec" action="/uid1rec">
-        <input name="name" placeholder="Not Set" value=")" + spiffsRead("/uid1str") + R"(">
+      <form method="POST" id="UIDrec" action="/UIDrec">
+        <input name="1" placeholder="Not Set" value=")" + spiffsRead("/uid1str") + R"(">
         <button type="submit">Register</button>
       </form>      
         
       <h4>URL 1</h4>
-      <form method='POST' id='url1rec' action='/url1rec'>
-        <input name="url1rec" placeholder="Not Set" value=")" + spiffsRead("/url1str") + R"(">
+      <form method='POST' id='URLrec' action='/URLrec'>
+        <input name="1" placeholder="Not Set" value=")" + spiffsRead("/url1str") + R"(">
+        <button type='submit'>Save</button>
+      </form>
+     <h4>Tag 2</h4>
+      <form method="POST" id="UIDrec" action="/UIDrec">
+        <input name="2" placeholder="Not Set" value=")" + spiffsRead("/uid2str") + R"(">
+        <button type="submit">Register</button>
+      </form>      
+        
+      <h4>URL 2</h4>
+      <form method='POST' id='URLrec' action='/URLrec'>
+        <input name="2" placeholder="Not Set" value=")" + spiffsRead("/url2str") + R"(">
         <button type='submit'>Save</button>
       </form>
      
@@ -282,31 +288,21 @@ server.on("/update", HTTP_GET, [&](){
     )";
     server.send(200, "text/html", content);
   });  
-  server.on("/uid1rec", HTTP_POST, [&](){
-
-      uid1record();
-     send302("/");
-
-});
-  server.on("/url1rec", HTTP_POST, [&](){
-  
-    spiffsWrite("/url1str",server.arg("url1rec"));
-
-      //url1record();
-     send302("/");
-
-});
-
-  
-  server.on("/color", HTTP_PUT, [&](){
- //   state.color.r = server.arg("r").toInt();
-   // state.color.g = server.arg("g").toInt();
-   // state.color.b = server.arg("b").toInt();
-   // rotateColorFromPalette = ( ( server.arg("rotate").length() > 0 ) ? true : false );
-    
-    server.send(200, "text/plain", "");
-    server.client().stop();
+  server.on("/UIDrec", HTTP_POST, [&](){
+      String tempUIDIndex = server.argName(0);
+      int uidindex =tempUIDIndex.toInt();
+      UIDrecord(uidindex);
+      send302("/");
   });
+
+  server.on("/URLrec", HTTP_POST, [&](){
+     String tempUIDIndex = server.argName(0);
+     int urlIndex =tempUIDIndex.toInt();
+     spiffsWrite("/url"+String(urlIndex)+"str",server.arg(tempUIDIndex));
+     send302("/");
+  });
+
+
  
   
  
@@ -455,12 +451,11 @@ void loop() {
 
 
 
-void uid1record(){
+void UIDrecord(int index_num){
   LED_Blue();
   uint8_t success;
   uint8_t uidLength;  
-  uid1str = "";
-
+  String tempstr = "";
   bool waitforread = true;
   while(waitforread){
     success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
@@ -471,17 +466,21 @@ void uid1record(){
       Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
       Serial.print("  UID Value: ");
       nfc.PrintHex(uid, uidLength);
-      Serial.println("");
-
+      Serial.println(" saving to UID slot: "+ index_num);
+   Serial.println("*************"); 
       for (int i = 0; i < uidLength;i++)
-        uid1str = uid1str + uid[i];
-      spiffsWrite("/uid1str", uid1str);
-
+        tempstr = tempstr + uid[i];
+      Serial.print("using index:");
+      Serial.println(index_num);
+      spiffsWrite("/uid"+String(index_num)+"str", tempstr);
+      
     }
   }
-  
   LED_Off();
+  delay(10);
 }
+
+
 void UseURL1(String url1str)
 {
   setClock();
@@ -503,7 +502,7 @@ void UseURL1(String url1str)
 
 }
 
-
+/*
 void nfcread(){
   while(true){
   uint8_t success;
@@ -645,8 +644,10 @@ void nfcread(){
 
 }
 }
-
+*/
 void spiffsWrite(String path, String contents) {
+  Serial.println("SPIFFS Path:"+path);
+  Serial.println("SPIFFS contents:"+contents);
   File f = SPIFFS.open(path, "w");
   f.print(contents);
   f.close();
