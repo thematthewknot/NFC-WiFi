@@ -10,8 +10,8 @@
 #include <Adafruit_PN532.h>
 //#include <Wire.h>
 //#include <SPI.h>
-#include <ESP8266WiFi.h>
-
+#include <ESP8266WiFi.h> //use 2.4.2, trust me.
+#include <time.h>
 #include <DNSServer.h>
 
 //#include <ESP8266HTTPClient.h>
@@ -590,7 +590,7 @@ void UseURL1(int url_index)
     http.begin(dynamic_cast<WiFiClient&>(*client), "https://www.google.com");
     int httpCode = http.GET();
     Serial.println(httpCode);
-  } else {
+ } else {
     Serial.println("Failed to connect to Wifi.");
   }/*
   
