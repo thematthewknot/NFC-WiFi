@@ -51,7 +51,7 @@ SPIFFSCertStoreFile certs_ar("/certs.ar");
 
 
 ESP8266WebServer server(80);
-
+HTTPClient http;
 
 const uint8_t clockPin = 4;
 const uint8_t dataPin = 5;
@@ -61,7 +61,7 @@ const uint8_t dataPin = 5;
 #define PN532_SS   (13)
 #define PN532_MISO (14)
 #define VERSION      1
-#define MAXNUMTAGS  10
+#define MAXNUMTAGS  10 //Max number of tags
 
 
 uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
@@ -83,7 +83,8 @@ String notice;
 File fsUploadFile;              // a File object to temporarily store the received file
 bool startScanning = false;
 bool justDoOnce = true;
-int numTags = 1;
+bool noClientConnected= true;
+int numTags =1; //default number of tags 
 
 const char * header = R"(<!DOCTYPE html>
 <html>
@@ -107,6 +108,7 @@ const char * header = R"(<!DOCTYPE html>
 
 void spiffsWrite(String, String);
 String storedTags[MAXNUMTAGS] = {};
+String storedURLs[MAXNUMTAGS] = {};
 String spiffsRead(String);
 void LED_Off();
 void LED_Blue();
@@ -137,8 +139,9 @@ void setup()
     spiffsWrite("/url2str", "Not Set");
   }
   if ( ! SPIFFS.exists("/numTags") ) {
-    spiffsWrite("/numTags", "2");
+    spiffsWrite("/numTags", String(numTags));
   }
+  numTags = spiffsRead("/numTags").toInt();
 
   
   Serial.println("Hello!");
@@ -252,41 +255,69 @@ server.on("/", [&]() {
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
   server.sendHeader("Expires", "-1");
-
+  noClientConnected = false;
   String content = header;
 
 
   content += R"(
       </select>
       <!-- <button type="submit">Set</button> -->
+      <p>After you've set up the tags you wish to use hit run to start using the NFC-WiFi Board</p>
       <form method="POST" id="Run" action="/RunScan">
-        <button type="submit">Run</button>
+        <button type="submit">RUN</button>
       </form>    
-     <h4>Tag 1</h4>
-      <form method="POST" id="UIDrec" action="/UIDrec">
-        <input name="1" placeholder="Not Set" value=")" + spiffsRead("/uid1str") + R"(">
-        <button type="submit">Register</button>
-      </form>      
-        
-      <h4>URL 1</h4>
-      <form method='POST' id='URLrec' action='/URLrec'>
-        <input name="1" placeholder="Not Set" value=")" + spiffsRead("/url1str") + R"(">
-        <button type='submit'>Save</button>
+      <p>Set The number of tags you want to use, then select set tag number</p>
+      <form method="POST" id="SetTagNum" action="/setNumTags">
+        <select name="numberOfTags">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+        </select>
+        <button type="submit">Set Tag Number</button>
+
       </form>
-     <h4>Tag 2</h4>
+     <p>Below is to setup your tags, click the register button and scan a tag</p>
+     <p>once the page reloads(be patient) paste the URL you want to toggle and hit save for each tag </p>
+
+  )";
+  for(int i=1;i<numTags+1;i++)
+  {
+    content += R"(
+     <h4>Tag )";
+        content += String(i);  
+        content += R"(</h4>
       <form method="POST" id="UIDrec" action="/UIDrec">
-        <input name="2" placeholder="Not Set" value=")" + spiffsRead("/uid2str") + R"(">
+        <input name=")";
+        content += String(i);
+        content += R"(" placeholder="Not Set" value=")";
+        content += spiffsRead("/uid"+String(i)+"str");
+        content += R"("">
         <button type="submit">Register</button>
-      </form>      
+      </form>       )"; 
         
-      <h4>URL 2</h4>
+     content += R"(  
+      <h4>URL )";
+      content +=String(i);
+       content += R"(</h4>
       <form method='POST' id='URLrec' action='/URLrec'>
-        <input name="2" placeholder="Not Set" value=")" + spiffsRead("/url2str") + R"(">
+        <input name=")";
+                content += String(i);
+         content += R"(" placeholder="Not Set" value=")";
+        content +=spiffsRead("/url"+String(i)+"str");
+         content += R"("">
         <button type='submit'>Save</button>
-      </form>
-     
-             
+      </form>        
     )";
+  
+  }
+  
   server.send(200, "text/html", content);
 });
 server.on("/RunScan", HTTP_POST, [&]() {
@@ -294,28 +325,47 @@ server.on("/RunScan", HTTP_POST, [&]() {
 
 
 
-  numTags = spiffsRead("/numTags").toInt();      
+  //numTags = spiffsRead("/numTags").toInt();      
   for(int i=0;i<numTags;i++)
   {
-      storedTags[i]=spiffsRead("/uid"+String(i)+"str");
+      storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
+      storedURLs[i]=spiffsRead("/url"+String(i+1)+"str");
   }
- 
- 
+    
+});
+server.on("/setNumTags", HTTP_POST, [&]() {
+
+    String NumTagsStr = server.arg(0);
+    numTags =NumTagsStr.toInt();
+  spiffsWrite("/numTags",NumTagsStr);    
+  send302("/");
 
     
 });
-
 server.on("/UIDrec", HTTP_POST, [&]() {
   String tempUIDIndex = server.argName(0);
   int uidindex = tempUIDIndex.toInt();
   UIDrecord(uidindex);
-  send302("/");
+  server.sendHeader("Location", "/", true);
+  server.send ( 302, "text/plain", "");
+  //send302("/");
 });
 
 server.on("/URLrec", HTTP_POST, [&]() {
-  String tempUIDIndex = server.argName(0);
-  int urlIndex = tempUIDIndex.toInt();
-  spiffsWrite("/url" + String(urlIndex) + "str", server.arg(tempUIDIndex));
+  String tempURLIndex = server.argName(0);
+  Serial.println("DEBUG: url as enteded:"+server.arg(tempURLIndex));
+String isHttps =  server.arg(tempURLIndex).substring(0,8);
+isHttps.toLowerCase();
+String isHttp =  server.arg(tempURLIndex).substring(0,7);
+String urlStr =  server.arg(tempURLIndex);
+  if(isHttp=="http://")
+    urlStr.remove(0,7);
+  if(isHttps=="https://")
+    urlStr.remove(0,8);
+  Serial.println("DEBUG: after modifing:"+urlStr);
+
+  int urlIndex = tempURLIndex.toInt();
+  spiffsWrite("/url" + String(urlIndex) + "str", urlStr);
   send302("/");
 });
 
@@ -389,12 +439,13 @@ server.on("/version.json", [&]() {
   server.client().stop();
 });
 //  server.onNotFound ( handleNotFound );
-server.begin(); // Web server start
+
 
 
 WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
-
+setClock();
+server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
 
 
@@ -404,7 +455,17 @@ Serial.println("End Of Setup Loop");
 
 
 void loop() {
-  
+  if(noClientConnected)
+   { 
+    if( millis()/120000)
+    {
+         
+      noClientConnected =false;
+      startScanning = true;
+    }
+   }  
+
+
 if(startScanning){
 
   uint8_t success;
@@ -430,24 +491,19 @@ if(startScanning){
     bool isMatch= false;
     for(int i=0;i<numTags;i++)
     {
-        Serial.println("DEBUG list:"+storedTags[i]);
+        //Serial.println("DEBUG list:"+storedTags[i]);
        
         if(readuid==storedTags[i])
         {
-          isMatch = true;
+            LED_Green();
+           UseURL1(i+1);
+          delay(5000);
+           LED_Off();
+           isMatch = true;
           break;
         }
                
     }
-    
-
-      if(isMatch == true)
-      {
-        LED_Green();
-       // UseURL1(url1str);
-        delay(5000);
-        LED_Off();
-      }
       if(isMatch == false)
       {
         LED_Red();
@@ -496,166 +552,98 @@ void UIDrecord(int index_num) {
 }
 
 
-void UseURL1(String url1str)
+void UseURL1(int url_index)
 {
+  
+  
+  String tempURL = spiffsRead("/url"+String(url_index)+"str");
+  
+  
+  WiFiManager wifiManager;
+  while(WiFi.status() != WL_CONNECTED){
+    Serial.print(".");
+    delay(500);
+    
+    }
+
+    Serial.print("connection results: ");
+    Serial.println(wifiManager.autoConnect());
+    
+  if (1) {
+    setClock();
+    SPIFFS.begin();
+
+    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+    BearSSL::CertStore certStore;
+    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
+    client->setCertStore(&certStore);
+    Serial.println(numCerts);
+    Serial.print("temURL:");
+    Serial.println(tempURL);
+    http.begin(dynamic_cast<WiFiClient&>(*client),tempURL);
+    int httpCode = http.GET();
+    Serial.println(httpCode);
+  } else {
+    Serial.println("Failed to connect to Wifi.");
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  /*
+  String tempURL = spiffsRead("/url"+String(url_index)+"str");
+  while (WiFi.status() != WL_CONNECTED)
+  {
+  delay(500);
+  Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED)
+  {
   setClock();
   HTTPClient http;
   BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
   BearSSL::CertStore certStore;
   int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
   client->setCertStore(&certStore);
-  Serial.println("numCerts: " + numCerts);
-
+  Serial.print("numCerts: "); 
+  Serial.println(numCerts);
+  Serial.print("url_index: "); 
+  Serial.println(url_index);
   if (numCerts == 0) {
     Serial.printf("No certs found. Did you run certs-from-mozill.py and upload the SPIFFS directory before running?\n");
     return; // Can't connect to anything w/o certs!
   }
-  Serial.println("calling: " + url1str);
-  http.begin(dynamic_cast<WiFiClient&>(*client), url1str);
+  Serial.println("calling: " + tempURL);
+  
+  http.begin(dynamic_cast<WiFiClient&>(*client),tempURL);
+  //http.GET();
   int httpCode = http.GET();
   Serial.println("httpCode" + httpCode);
-
+  }
+  else
+  {
+    Serial.println("couldn't connect to wifi");
+  }*/
 }
 
- /* void runloop(){
 
-  uint8_t success;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
-  uint8_t uidLength;              // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-
-  if (success) {
-    Serial.println("Found an ISO14443A card");
-    Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
-    Serial.print("  UID Value: ");
-    nfc.PrintHex(uid, uidLength);
-    Serial.println("");
-
-    String readuid = "";
-    for(int i=0;i<uidLength;i++)
-    {
-      readuid = readuid + uid[i];
-    }
-
-    if (uidLength == 4)
-    {
-      bool isMatch= false;
-        if(readuid==uid1str)
-        {
-          isMatch = true;
-        }
-        else
-        {
-          isMatch =false;
-        }
-
-
-      if(isMatch == true)
-      {
-        LED_Green();
-        UseURL1(url1str);
-        isMatch == false;
-        delay(5000);
-        LED_Off();
-      }
-      if(isMatch == false)
-      {
-        LED_Red();
-        isMatch == false;
-        delay(3000);
-        LED_Off();
-      }
-
-      Serial.println("Seems to be a Mifare Classic card (4 byte UID)");
-
-
-      Serial.println("Trying to authenticate block 4 with default KEYA value");
-      uint8_t keya[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-
-      success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, keya);
-
-      if (success)
-      {
-        Serial.println("Sector 1 (Blocks 4..7) has been authenticated");
-        uint8_t nfcdata[16];
-
-        success = nfc.mifareclassic_ReadDataBlock(4, nfcdata);
-
-        if (success)
-        {
-          Serial.println("Reading Block 4:");
-          nfc.PrintHexChar(nfcdata, 16);
-          Serial.println("");
-
-          delay(1000);
-        }
-        else
-        {
-          Serial.println("Ooops ... unable to read the requested block.  Try another key?");
-        }
-      }
-      else
-      {
-        Serial.println("Ooops ... authentication failed: Try another key?");
-      }
-    }
-
-    if (uidLength == 7)
-    {
-      bool isMatch= false;
-      String readuid = "";
-      for(int i=0;i<uidLength;i++)
-      {
-        readuid = readuid + uid[i];
-      }
-      if(readuid==uid1str)
-      {
-        isMatch = true;
-      }
-      else
-      {
-        isMatch =false;
-      }
-
-      if(isMatch == true)
-      {
-        LED_Green();
-        UseURL1(url1str);
-
-        isMatch == false;
-        delay(5000);
-        LED_Off();
-      }
-      if(isMatch == false)
-      {
-        LED_Red();
-        isMatch == false;
-        delay(3000);
-        LED_Off();
-      }
-      Serial.println("Seems to be a Mifare Ultralight tag (7 byte UID)");
-
-      Serial.println("Reading page 4");
-      uint8_t nfcdata[32];
-      success = nfc.mifareultralight_ReadPage (4, nfcdata);
-      if (success)
-      {
-        nfc.PrintHexChar(nfcdata, 4);
-        Serial.println("");
-
-        delay(1000);
-      }
-      else
-      {
-        Serial.println("Ooops ... unable to read the requested page!?");
-      }
-    }
-  }
-
-  
-  }
-*/
 void spiffsWrite(String path, String contents) {
   Serial.println("SPIFFS Path:" + path);
   Serial.println("SPIFFS contents:" + contents);
