@@ -2,18 +2,21 @@
 // https://github.com/thematthewknot/NFC-WiFi
 // released under the GPLv3 license.
 #include <FS.h>
+#include <CertStoreBearSSL.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
 #include <WiFiManager.h>
 #include <APA102.h>
 #include <Adafruit_PN532.h>
-#include <Wire.h>
-#include <SPI.h>
+//#include <Wire.h>
+//#include <SPI.h>
 #include <ESP8266WiFi.h>
+
 #include <DNSServer.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
-#include <CertStoreBearSSL.h>
-#include <time.h>
+
+//#include <ESP8266HTTPClient.h>
+//#include <WiFiClientSecure.h>
+
 
 
 class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
@@ -47,11 +50,24 @@ SPIFFSCertStoreFile certs_idx("/certs.idx");
 SPIFFSCertStoreFile certs_ar("/certs.ar");
 
 
-
+void setClock() {
+  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP time sync: ");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("");
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  Serial.print("Current time: ");
+  Serial.print(asctime(&timeinfo));
+}
 
 
 ESP8266WebServer server(80);
-HTTPClient http;
 
 const uint8_t clockPin = 4;
 const uint8_t dataPin = 5;
@@ -80,7 +96,7 @@ const uint16_t ledCount = 1;
 const uint8_t brightness = 1;
 
 String notice;
-File fsUploadFile;              // a File object to temporarily store the received file
+//File fsUploadFile;              // a File object to temporarily store the received file
 bool startScanning = false;
 bool justDoOnce = true;
 bool noClientConnected= true;
@@ -114,9 +130,10 @@ void LED_Off();
 void LED_Blue();
 void LED_Red();
 void LED_Green();
+void nfcread();
 void UIDrecord(int);
 void UseURL1(String);
-void setClock();
+
 void send302(String);
 
 void setup()
@@ -181,7 +198,7 @@ server.on("/update", HTTP_GET, [&](){
 server.send(200, "text/html", content);
 });
 // handler for the /update form POST (once file upload finishes)
-server.on("/update", HTTP_POST, [&]() {
+/*server.on("/update", HTTP_POST, [&]() {
   server.sendHeader("Connection", "close");
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
@@ -209,7 +226,7 @@ server.on("/update", HTTP_POST, [&]() {
     }
   }
   delay(0);
-});
+});*/
 server.on("/style.css", [&]() {
   server.send(200, "text/css", R"(
       html {
@@ -323,7 +340,7 @@ server.on("/", [&]() {
 server.on("/RunScan", HTTP_POST, [&]() {
     startScanning = true;
 
-
+  
 
   //numTags = spiffsRead("/numTags").toInt();      
   for(int i=0;i<numTags;i++)
@@ -331,7 +348,7 @@ server.on("/RunScan", HTTP_POST, [&]() {
       storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
       storedURLs[i]=spiffsRead("/url"+String(i+1)+"str");
   }
-    
+    Serial.println("endering run state");
 });
 server.on("/setNumTags", HTTP_POST, [&]() {
 
@@ -444,7 +461,8 @@ server.on("/version.json", [&]() {
 
 WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
-setClock();
+//setClock();
+
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
 
@@ -467,7 +485,17 @@ void loop() {
 
 
 if(startScanning){
-
+nfcread();
+}
+else
+  {
+   server.handleClient();
+  }
+}
+void nfcread(){
+  server.stop();
+  WiFi.mode(WIFI_STA);
+  while(true){
   uint8_t success;
   uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
   uint8_t uidLength;              // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
@@ -514,13 +542,8 @@ if(startScanning){
  
       
   }
-}
-else
-  {
-   server.handleClient();
   }
 }
-
 
 void UIDrecord(int index_num) {
   LED_Blue();
@@ -554,42 +577,52 @@ void UIDrecord(int index_num) {
 
 void UseURL1(int url_index)
 {
-  
-  
-  String tempURL = spiffsRead("/url"+String(url_index)+"str");
-  
-  
-  WiFiManager wifiManager;
-  while(WiFi.status() != WL_CONNECTED){
-    Serial.print(".");
-    delay(500);
-    
-    }
-
-    Serial.print("connection results: ");
-    Serial.println(wifiManager.autoConnect());
-    
-  if (1) {
+   WiFiManager wifiManager;
+  if (wifiManager.autoConnect()) {
     setClock();
     SPIFFS.begin();
-
+    HTTPClient http;
     BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
     BearSSL::CertStore certStore;
     int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
     client->setCertStore(&certStore);
     Serial.println(numCerts);
-    Serial.print("temURL:");
-    Serial.println(tempURL);
-    http.begin(dynamic_cast<WiFiClient&>(*client),tempURL);
+    http.begin(dynamic_cast<WiFiClient&>(*client), "https://www.google.com");
     int httpCode = http.GET();
+    Serial.println(httpCode);
+  } else {
+    Serial.println("Failed to connect to Wifi.");
+  }/*
+  
+  String tempURL = spiffsRead("/url"+String(url_index)+"str");
+  
+  
+  WiFiManager wifiManager;
+while (WiFi.status() != WL_CONNECTED)
+  {
+  delay(500);
+  Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    setClock();
+    HTTPClient http;
+    SPIFFS.begin();
+    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+    BearSSL::CertStore certStore;
+    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
+    client->setCertStore(&certStore);
+    Serial.println(numCerts);
+    http.begin(dynamic_cast<WiFiClient&>(*client),"https://www.google.com");
+    int httpCode = http.GET();
+    Serial.print("httpCode");
     Serial.println(httpCode);
   } else {
     Serial.println("Failed to connect to Wifi.");
   }
   
+  */
   
-  
-  
+  // if (wifiManager.autoConnect())
   
   
   
@@ -686,19 +719,4 @@ void send302(String dest) {
   server.sendHeader("Location", dest, true);
   server.send ( 302, "text/plain", "");
   server.client().stop();
-}
-void setClock() {
-  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.print("Waiting for NTP time sync: ");
-  time_t now = time(nullptr);
-  while (now < 8 * 3600 * 2) {
-    delay(500);
-    Serial.print(".");
-    now = time(nullptr);
-  }
-  Serial.println("");
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  Serial.print("Current time: ");
-  Serial.print(asctime(&timeinfo));
 }
