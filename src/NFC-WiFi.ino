@@ -3,20 +3,14 @@
 // released under the GPLv3 license.
 #include <FS.h>
 #include <CertStoreBearSSL.h>
-#include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiManager.h>
 #include <APA102.h>
 #include <Adafruit_PN532.h>
-//#include <Wire.h>
-//#include <SPI.h>
 #include <ESP8266WiFi.h> //use 2.4.2, trust me.
 #include <time.h>
 #include <DNSServer.h>
-
-//#include <ESP8266HTTPClient.h>
-//#include <WiFiClientSecure.h>
-
+#include <ESP8266WebServer.h>
 
 
 class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
@@ -49,7 +43,13 @@ class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
 SPIFFSCertStoreFile certs_idx("/certs.idx");
 SPIFFSCertStoreFile certs_ar("/certs.ar");
 
-
+void onStationModeDisconnectedEvent(const WiFiEventStationModeDisconnected& evt) {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.disconnect();
+  } else {
+    Serial.println("         WiFi disconnected...");
+  }
+}
 void setClock() {
   configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
   Serial.print("Waiting for NTP time sync: ");
@@ -66,7 +66,6 @@ void setClock() {
   Serial.print(asctime(&timeinfo));
 }
 
-
 ESP8266WebServer server(80);
 
 const uint8_t clockPin = 4;
@@ -81,13 +80,6 @@ const uint8_t dataPin = 5;
 
 
 uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
-//String uid1str = "Not Set";
-//String url1str = "Not Set";
-//String IFTTTKey = "Not Set";
-//String IFTTTEvent1 = "Not Set";
-//String host = "maker.ifttt.com";
-//int httpsPort = 443;
-//char fingerprint[] = "AA:75:CB:41:2E:D5:F9:97:FF:5D:A0:8B:7D:AC:12:21:08:4B:00:8C";
 
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 APA102<dataPin, clockPin> ledStrip;
@@ -96,7 +88,7 @@ const uint16_t ledCount = 1;
 const uint8_t brightness = 1;
 
 String notice;
-//File fsUploadFile;              // a File object to temporarily store the received file
+File fsUploadFile;              // a File object to temporarily store the received file
 bool startScanning = false;
 bool justDoOnce = true;
 bool noClientConnected= true;
@@ -132,8 +124,8 @@ void LED_Red();
 void LED_Green();
 void nfcread();
 void UIDrecord(int);
-void UseURL1(String);
-
+void UseURL(String);
+void StoreTagsBeforeStart();
 void send302(String);
 
 void setup()
@@ -149,19 +141,13 @@ void setup()
   if ( ! SPIFFS.exists("/url1str") ) {
     spiffsWrite("/url1str", "Not Set");
   }
-  if ( ! SPIFFS.exists("/uid2str") ) {
-    spiffsWrite("/uid2str", "Not Set");
-  }
-  if ( ! SPIFFS.exists("/url2str") ) {
-    spiffsWrite("/url2str", "Not Set");
-  }
   if ( ! SPIFFS.exists("/numTags") ) {
     spiffsWrite("/numTags", String(numTags));
   }
   numTags = spiffsRead("/numTags").toInt();
 
   
-  Serial.println("Hello!");
+ 
 
   nfc.begin();
 
@@ -177,7 +163,6 @@ void setup()
 
   nfc.SAMConfig();
   LED_Off();
-  //server.on("/",handlePostForm);
 
 server.on("/update", HTTP_GET, [&](){
     String content = header;
@@ -198,7 +183,7 @@ server.on("/update", HTTP_GET, [&](){
 server.send(200, "text/html", content);
 });
 // handler for the /update form POST (once file upload finishes)
-/*server.on("/update", HTTP_POST, [&]() {
+server.on("/update", HTTP_POST, [&]() {
   server.sendHeader("Connection", "close");
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
@@ -226,7 +211,7 @@ server.send(200, "text/html", content);
     }
   }
   delay(0);
-});*/
+});
 server.on("/style.css", [&]() {
   server.send(200, "text/css", R"(
       html {
@@ -266,9 +251,7 @@ server.on("/style.css", [&]() {
     )");
 });
 server.on("/", [&]() {
-  //    if (captivePortal()) { // If caprive portal redirect instead of displaying the page.
-  //   return;
-  //  }
+
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
   server.sendHeader("Expires", "-1");
@@ -338,16 +321,10 @@ server.on("/", [&]() {
   server.send(200, "text/html", content);
 });
 server.on("/RunScan", HTTP_POST, [&]() {
-    startScanning = true;
+   
 
-  
+  StoreTagsBeforeStart();
 
-  //numTags = spiffsRead("/numTags").toInt();      
-  for(int i=0;i<numTags;i++)
-  {
-      storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
-      storedURLs[i]=spiffsRead("/url"+String(i+1)+"str");
-  }
     Serial.println("endering run state");
 });
 server.on("/setNumTags", HTTP_POST, [&]() {
@@ -370,24 +347,14 @@ server.on("/UIDrec", HTTP_POST, [&]() {
 
 server.on("/URLrec", HTTP_POST, [&]() {
   String tempURLIndex = server.argName(0);
-  Serial.println("DEBUG: url as enteded:"+server.arg(tempURLIndex));
-String isHttps =  server.arg(tempURLIndex).substring(0,8);
-isHttps.toLowerCase();
-String isHttp =  server.arg(tempURLIndex).substring(0,7);
-String urlStr =  server.arg(tempURLIndex);
-  if(isHttp=="http://")
-    urlStr.remove(0,7);
-  if(isHttps=="https://")
-    urlStr.remove(0,8);
-  Serial.println("DEBUG: after modifing:"+urlStr);
 
+String urlStr =  server.arg(tempURLIndex);
+ 
+  
   int urlIndex = tempURLIndex.toInt();
   spiffsWrite("/url" + String(urlIndex) + "str", urlStr);
   send302("/");
 });
-
-
-
 
 
 server.on("/setup", [&]() {
@@ -462,7 +429,6 @@ server.on("/version.json", [&]() {
 WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
 //setClock();
-
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
 
@@ -473,25 +439,34 @@ Serial.println("End Of Setup Loop");
 
 
 void loop() {
-  if(noClientConnected)
+
+  if(noClientConnected) //timeout of 2min before starting to run if no one connects to website.
    { 
-    if( millis()/120000)
+    if( millis()/120000) 
     {
-         
-      noClientConnected =false;
-      startScanning = true;
+      StoreTagsBeforeStart();   
     }
    }  
 
 
-if(startScanning){
-nfcread();
+  if(startScanning){
+    nfcread();
+  }
+  else{
+    server.handleClient();
+    }
 }
-else
+
+void StoreTagsBeforeStart(){ //read all thags and urls before starting 
+  noClientConnected =false;
+  startScanning = true;
+  for(int i=0;i<numTags;i++)
   {
-   server.handleClient();
+      storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
+      storedURLs[i]=spiffsRead("/url"+String(i+1)+"str");
   }
 }
+
 void nfcread(){
   server.stop();
   WiFi.mode(WIFI_STA);
@@ -524,7 +499,7 @@ void nfcread(){
         if(readuid==storedTags[i])
         {
             LED_Green();
-           UseURL1(i+1);
+           UseURL(i);
           delay(5000);
            LED_Off();
            isMatch = true;
@@ -575,105 +550,36 @@ void UIDrecord(int index_num) {
 }
 
 
-void UseURL1(int url_index)
+void UseURL(int url_index)
 {
+   String url = storedURLs[url_index];
+   Serial.println("Attempting to call:"+url);
    WiFiManager wifiManager;
   if (wifiManager.autoConnect()) {
     setClock();
-    SPIFFS.begin();
+    //SPIFFS.begin();
     HTTPClient http;
     BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
     BearSSL::CertStore certStore;
     int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
     client->setCertStore(&certStore);
     Serial.println(numCerts);
-    http.begin(dynamic_cast<WiFiClient&>(*client), "https://www.google.com");
-    int httpCode = http.GET();
-    Serial.println(httpCode);
+    
+    for(int i=0;i<10;i++){
+      http.begin(dynamic_cast<WiFiClient&>(*client), url);
+      long httpCode = http.GET();
+      Serial.println(httpCode);
+      Serial.print("result");
+      Serial.println(http.getString());
+      if(httpCode>0)
+        break;
+      delay(100);
+    }
  } else {
     Serial.println("Failed to connect to Wifi.");
-  }/*
-  
-  String tempURL = spiffsRead("/url"+String(url_index)+"str");
-  
-  
-  WiFiManager wifiManager;
-while (WiFi.status() != WL_CONNECTED)
-  {
-  delay(500);
-  Serial.print(".");
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    setClock();
-    HTTPClient http;
-    SPIFFS.begin();
-    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-    BearSSL::CertStore certStore;
-    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
-    client->setCertStore(&certStore);
-    Serial.println(numCerts);
-    http.begin(dynamic_cast<WiFiClient&>(*client),"https://www.google.com");
-    int httpCode = http.GET();
-    Serial.print("httpCode");
-    Serial.println(httpCode);
-  } else {
-    Serial.println("Failed to connect to Wifi.");
-  }
-  
-  */
-  
-  // if (wifiManager.autoConnect())
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  /*
-  String tempURL = spiffsRead("/url"+String(url_index)+"str");
-  while (WiFi.status() != WL_CONNECTED)
-  {
-  delay(500);
-  Serial.print(".");
-  }
-  if (WiFi.status() == WL_CONNECTED)
-  {
-  setClock();
-  HTTPClient http;
-  BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-  BearSSL::CertStore certStore;
-  int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
-  client->setCertStore(&certStore);
-  Serial.print("numCerts: "); 
-  Serial.println(numCerts);
-  Serial.print("url_index: "); 
-  Serial.println(url_index);
-  if (numCerts == 0) {
-    Serial.printf("No certs found. Did you run certs-from-mozill.py and upload the SPIFFS directory before running?\n");
-    return; // Can't connect to anything w/o certs!
-  }
-  Serial.println("calling: " + tempURL);
-  
-  http.begin(dynamic_cast<WiFiClient&>(*client),tempURL);
-  //http.GET();
-  int httpCode = http.GET();
-  Serial.println("httpCode" + httpCode);
-  }
-  else
-  {
-    Serial.println("couldn't connect to wifi");
-  }*/
+  Serial.println("done");
+
 }
 
 
