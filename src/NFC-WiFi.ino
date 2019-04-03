@@ -118,6 +118,7 @@ void spiffsWrite(String, String);
 String storedTags[MAXNUMTAGS] = {};
 String storedURLs[MAXNUMTAGS] = {};
 String spiffsRead(String);
+int CheckNumCerts();
 void LED_Off();
 void LED_Blue();
 void LED_Red();
@@ -166,11 +167,13 @@ void setup()
 
 server.on("/update", HTTP_GET, [&](){
     String content = header;
-    content += ("<h1>Update</h1>");
+    content += ("<h1>Update</h1><p>Number of certs read from the cert.ar file currently loaded = ");
+
+      content += String(CheckNumCerts());
 
 
     content += R"(
-      <h2>Update cert from a file</h2>
+      </p><h2>Update cert from a file</h2>
       <p>Run this python script, and upload the cert.ar file if need be(or you can upload your own if you want)</p>
       <p>https://github.com/esp8266/Arduino/blob/master/libraries/ESP8266WiFi/examples/BearSSL_CertStore/certs-from-mozilla.py</p>
       <p>This shouldn't be required, but you never know. If using your own use cert.ar filename</p>
@@ -553,7 +556,11 @@ void UIDrecord(int index_num) {
 void UseURL(int url_index)
 {
    String url = storedURLs[url_index];
+   String url_first4= url.substring(0,5);
+   url_first4.toLowerCase();
    Serial.println("Attempting to call:"+url);
+   Serial.println("checking http vs https got:"+url_first4);
+   if(url_first4 == "https"){
    WiFiManager wifiManager;
   if (wifiManager.autoConnect()) {
     setClock();
@@ -579,9 +586,50 @@ void UseURL(int url_index)
     Serial.println("Failed to connect to Wifi.");
   }
   Serial.println("done");
+}
+else
+{
+  Serial.println("trying regular http post of:" + url);
+   WiFiClient client;
+
+    HTTPClient http;
+
+    Serial.print("[HTTP] begin...\n");
+    if (http.begin(client, url)) {  // HTTP
+
+
+      Serial.print("[HTTP] GET...\n");
+      // start connection and send HTTP header
+      int httpCode = http.GET();
+
+      // httpCode will be negative on error
+      if (httpCode > 0) {
+        // HTTP header has been send and Server response header has been handled
+        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+        // file found at server
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+          String payload = http.getString();
+          Serial.println(payload);
+        }
+      } else {
+        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+      }
+
+      http.end();
+    } else {
+      Serial.printf("[HTTP} Unable to connect\n");
+    }
 
 }
+}
 
+int CheckNumCerts(){
+    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+    BearSSL::CertStore certStore;
+    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
+    return numCerts;
+
+}
 
 void spiffsWrite(String path, String contents) {
   Serial.println("SPIFFS Path:" + path);
