@@ -43,28 +43,10 @@ class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
 SPIFFSCertStoreFile certs_idx("/certs.idx");
 SPIFFSCertStoreFile certs_ar("/certs.ar");
 
-void onStationModeDisconnectedEvent(const WiFiEventStationModeDisconnected& evt) {
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFi.disconnect();
-  } else {
-    Serial.println("         WiFi disconnected...");
-  }
-}
-void setClock() {
-  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.print("Waiting for NTP time sync: ");
-  time_t now = time(nullptr);
-  while (now < 8 * 3600 * 2) {
-    delay(500);
-    Serial.print(".");
-    now = time(nullptr);
-  }
-  Serial.println("");
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  Serial.print("Current time: ");
-  Serial.print(asctime(&timeinfo));
-}
+BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+BearSSL::CertStore certStore;
+WiFiManager wifiManager;
+
 
 ESP8266WebServer server(80);
 
@@ -84,16 +66,14 @@ uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 APA102<dataPin, clockPin> ledStrip;
 
-const uint16_t ledCount = 1;
-const uint8_t brightness = 1;
+//const uint16_t ledCount = 1;
+//const uint8_t brightness = 1;
 
-String notice;
-File fsUploadFile;              // a File object to temporarily store the received file
+//File fsUploadFile;              // a File object to temporarily store the received file
 bool startScanning = false;
-bool justDoOnce = true;
 bool noClientConnected= true;
-int numTags =1; //default number of tags 
-
+int numTags; //default number of tags 
+int timezone;
 const char * header = R"(<!DOCTYPE html>
 <html>
 <head>
@@ -132,7 +112,7 @@ void send302(String);
 void setup()
 { 
   Serial.begin(115200);
-  bool result = SPIFFS.begin();
+  SPIFFS.begin();
   
 
 
@@ -143,11 +123,14 @@ void setup()
     spiffsWrite("/url1str", "Not Set");
   }
   if ( ! SPIFFS.exists("/numTags") ) {
-    spiffsWrite("/numTags", String(numTags));
+    spiffsWrite("/numTags", String(1));
   }
   numTags = spiffsRead("/numTags").toInt();
 
-  
+  if( ! SPIFFS.exists("/timezone")){
+    spiffsWrite("/timezone", String(-4));
+  }
+  timezone = spiffsRead("/timezone").toInt();
  
 
   nfc.begin();
@@ -193,6 +176,8 @@ server.on("/update", HTTP_POST, [&]() {
 }, [&]() {
   // handler for the file upload, get's the sketch bytes, and writes
   // them through the Update object
+    File fsUploadFile;
+
   HTTPUpload& upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
     String filename = upload.filename;
@@ -398,9 +383,22 @@ server.on("/setup", [&]() {
       </form>
     )");
 
+  server.sendContent(String() + R"(
+      <h4>TimeZone</h4>
+      <form method="POST" id="setup-device" action="/setup/timezone">
+        <input name="tzname" placeholder="timezone" value=")" + spiffsRead("/timezone") + R"(">
+        <button type="submit">Save</button>
+      </form>
+    )");
   server.client().stop();
 });
-
+server.on("/setup/timezone", HTTP_POST, [&]() {
+  Serial.print("[httpd] timezone settings post. ");
+  spiffsWrite("/timezone", server.arg("tzname"));
+  timezone = spiffsRead("/timezone").toInt();
+  send302("/setup?saved");
+  Serial.println("done.");
+});
 server.on("/setup/device", HTTP_POST, [&]() {
   Serial.print("[httpd] Device settings post. ");
   spiffsWrite("/name", server.arg("name"));
@@ -429,9 +427,10 @@ server.on("/version.json", [&]() {
 
 
 
-WiFiManager wifiManager;
+//WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
 //setClock();
+  
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
 
@@ -453,6 +452,7 @@ void loop() {
 
 
   if(startScanning){
+    server.stop();
     nfcread();
   }
   else{
@@ -561,20 +561,29 @@ void UseURL(int url_index)
    Serial.println("Attempting to call:"+url);
    Serial.println("checking http vs https got:"+url_first4);
    if(url_first4 == "https"){
-   WiFiManager wifiManager;
-  if (wifiManager.autoConnect()) {
+   //WiFiManager wifiManager;
+  //if (wifiManager.autoConnect()) 
+  if(WiFi.status() == WL_CONNECTED){
+    Serial.printf("before clock heap size: %u\n", ESP.getFreeHeap());
     setClock();
+    Serial.printf("after clock heap size: %u\n", ESP.getFreeHeap());
     //SPIFFS.begin();
     HTTPClient http;
-    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-    BearSSL::CertStore certStore;
+   // BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+  //  BearSSL::CertStore certStore;
     int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
     client->setCertStore(&certStore);
     Serial.println(numCerts);
-    
+    Serial.printf("after cert heap size: %u\n", ESP.getFreeHeap());
+
     for(int i=0;i<10;i++){
       http.begin(dynamic_cast<WiFiClient&>(*client), url);
+        Serial.printf("heap size before get: %u\n", ESP.getFreeHeap());
+
       long httpCode = http.GET();
+      
+      Serial.printf("heap size after get: %u\n", ESP.getFreeHeap());
+      delay(1000);
       Serial.println(httpCode);
       Serial.print("result");
       Serial.println(http.getString());
@@ -673,4 +682,19 @@ void send302(String dest) {
   server.sendHeader("Location", dest, true);
   server.send ( 302, "text/plain", "");
   server.client().stop();
+}
+void setClock() {
+  configTime(timezone * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP time sync: ");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("");
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  Serial.print("Current time: ");
+  Serial.print(asctime(&timeinfo));
 }
