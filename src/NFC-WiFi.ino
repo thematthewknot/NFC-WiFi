@@ -3,7 +3,6 @@
 // released under the GPLv3 license.
 #include <FS.h>
 #include <ESP8266WiFi.h> 
-#include <CertStoreBearSSL.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiManager.h>
 #include <APA102.h>
@@ -47,7 +46,6 @@ SPIFFSCertStoreFile certs_ar("/certs.ar");
 
 
 ESP8266WebServer server(80);
-BearSSL::CertStore certStore;
 
 const uint8_t clockPin = 4;
 const uint8_t dataPin = 5;
@@ -73,6 +71,22 @@ bool startScanning = false;
 bool noClientConnected= true;
 int numTags; //default number of tags 
 int timezone;
+const char * header = R"(<!DOCTYPE html>
+<html>
+<head>
+<title>NFC-WiFi</title>
+<link rel="stylesheet" href="/style.css">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+</head>
+<body>
+<div id="top">
+  <span id="title">NFC-WiFi</span>
+  <a href="/">Tags</a>
+  <a href="/setup">Setup</a>
+  <a href="/debug">Debug</a>
+  <a href="/update">Update</a>
+</div>
+)";
 
 
 
@@ -95,8 +109,6 @@ void send302(String);
 void setup()
 { 
   Serial.begin(115200);
-  Serial.printf("heap start of setup: %u\n", ESP.getFreeHeap());
-
   SPIFFS.begin();
   
 
@@ -132,22 +144,6 @@ void setup()
 
   nfc.SAMConfig();
   LED_Off();
-const char * header = R"(<!DOCTYPE html>
-<html>
-<head>
-<title>NFC-WiFi</title>
-<link rel="stylesheet" href="/style.css">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-</head>
-<body>
-<div id="top">
-  <span id="title">NFC-WiFi</span>
-  <a href="/">Tags</a>
-  <a href="/setup">Setup</a>
-  <a href="/debug">Debug</a>
-  <a href="/update">Update</a>
-</div>
-)";
 
 server.on("/update", HTTP_GET, [&](){
     String content = header;
@@ -428,11 +424,10 @@ server.on("/version.json", [&]() {
 
 WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
-setClock();
+//setClock();
  
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
-      Serial.printf("heap end of setup: %u\n", ESP.getFreeHeap());
 
 
 }
@@ -452,8 +447,6 @@ void loop() {
 
 
   if(startScanning){
-     Serial.printf("heap size starting scanning: %u\n", ESP.getFreeHeap());
-
     server.stop();
     nfcread();
   }
@@ -554,99 +547,7 @@ void UIDrecord(int index_num) {
   delay(10);
 }
 
-void fetchURL(BearSSL::WiFiClientSecure *client, const char *host, const uint16_t port, const char *path) {
-  if (!path) {
-    path = "/";
-  }
 
-  Serial.printf("Trying: %s:443...", host);
-  client->connect(host, port);
-  if (!client->connected()) {
-    Serial.printf("*** Can't connect. ***\n-------\n");
-    return;
-  }
-  Serial.printf("Connected!\n-------\n");
-  client->write("GET ");
-  client->write(path);
-  client->write(" HTTP/1.0\r\nHost: ");
-  client->write(host);
-  client->write("\r\nUser-Agent: ESP8266\r\n");
-  client->write("\r\n");
-  uint32_t to = millis() + 5000;
-  if (client->connected()) {
-    do {
-      char tmp[32];
-      memset(tmp, 0, 32);
-      int rlen = client->read((uint8_t*)tmp, sizeof(tmp) - 1);
-      yield();
-      if (rlen < 0) {
-        break;
-      }
-      // Only print out first line up to \r, then abort connection
-      char *nl = strchr(tmp, '\r');
-      if (nl) {
-        *nl = 0;
-        Serial.print(tmp);
-        break;
-      }
-      Serial.print(tmp);
-    } while (millis() < to);
-  }
-  client->stop();
-  Serial.printf("\n-------\n");
-}
-
-void UseURL(int url_index)
-{
-   String url = storedURLs[url_index];
-   String url_first4= url.substring(0,5);
-   url_first4.toLowerCase();
-   Serial.println("Attempting to call:"+url);
-   Serial.println("checking http vs https got:"+url_first4);
-   if(url_first4 == "https"){
-  BearSSL::WiFiClientSecure *bear = new BearSSL::WiFiClientSecure();
-  // Integrate the cert store with this connection
-  bear->setCertStore(&certStore);
-  fetchURL(bear, url.c_str(), 443, "/");
-  delete bear;
-}
-else
-{
-  Serial.println("trying regular http post of:" + url);
-   WiFiClient client;
-
-    HTTPClient http;
-    http.setReuse(true);
-
-    Serial.print("[HTTP] begin...\n");
-    if (http.begin(client, url)) {  // HTTP
-
-
-      Serial.print("[HTTP] GET...\n");
-      // start connection and send HTTP header
-      int httpCode = http.GET();
-
-      // httpCode will be negative on error
-      if (httpCode > 0) {
-        // HTTP header has been send and Server response header has been handled
-        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
-        // file found at server
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-          String payload = http.getString();
-          Serial.println(payload);
-        }
-      } else {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-      }
-
-      http.end();
-    } else {
-      Serial.printf("[HTTP} Unable to connect\n");
-    }
-
-}
-}
-/*
 void UseURL(int url_index)
 {
    String url = storedURLs[url_index];
@@ -675,6 +576,7 @@ void UseURL(int url_index)
         Serial.printf("heap size before get: %u\n", ESP.getFreeHeap());
 
       long httpCode = http.GET();
+      
       Serial.printf("heap size after get: %u\n", ESP.getFreeHeap());
       delay(1000);
       Serial.println(httpCode);
@@ -695,7 +597,6 @@ else
    WiFiClient client;
 
     HTTPClient http;
-    http.setReuse(true);
 
     Serial.print("[HTTP] begin...\n");
     if (http.begin(client, url)) {  // HTTP
@@ -724,7 +625,8 @@ else
     }
 
 }
-}*/
+}
+
 int CheckNumCerts(){
     BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
     BearSSL::CertStore certStore;
