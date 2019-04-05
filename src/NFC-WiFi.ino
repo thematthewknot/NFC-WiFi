@@ -69,7 +69,7 @@ APA102<dataPin, clockPin> ledStrip;
 //const uint16_t ledCount = 1;
 //const uint8_t brightness = 1;
 
-//File fsUploadFile;              // a File object to temporarily store the received file
+File fsUploadFile;              // a File object to temporarily store the received file
 bool startScanning = false;
 bool noClientConnected= true;
 int numTags; //default number of tags 
@@ -176,8 +176,6 @@ server.on("/update", HTTP_POST, [&]() {
 }, [&]() {
   // handler for the file upload, get's the sketch bytes, and writes
   // them through the Update object
-    File fsUploadFile;
-
   HTTPUpload& upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
     String filename = upload.filename;
