@@ -2,12 +2,11 @@
 // https://github.com/thematthewknot/NFC-WiFi
 // released under the GPLv3 license.
 #include <FS.h>
-#include <CertStoreBearSSL.h>
+#include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <WiFiManager.h>
 #include <APA102.h>
 #include <Adafruit_PN532.h>
-#include <ESP8266WiFi.h> //use 2.4.2, trust me.
 #include <time.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
@@ -43,9 +42,7 @@ class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
 SPIFFSCertStoreFile certs_idx("/certs.idx");
 SPIFFSCertStoreFile certs_ar("/certs.ar");
 
-BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-BearSSL::CertStore certStore;
-WiFiManager wifiManager;
+
 
 
 ESP8266WebServer server(80);
@@ -425,10 +422,10 @@ server.on("/version.json", [&]() {
 
 
 
-//WiFiManager wifiManager;
+WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
 //setClock();
-  
+ 
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
 
@@ -567,8 +564,8 @@ void UseURL(int url_index)
     Serial.printf("after clock heap size: %u\n", ESP.getFreeHeap());
     //SPIFFS.begin();
     HTTPClient http;
-   // BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-  //  BearSSL::CertStore certStore;
+    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
+    BearSSL::CertStore certStore;
     int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
     client->setCertStore(&certStore);
     Serial.println(numCerts);
