@@ -12,39 +12,6 @@
 #include <ESP8266WebServer.h>
 
 
-class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
-  public:
-    SPIFFSCertStoreFile(const char *name) {
-      _name = name;
-    };
-    virtual ~SPIFFSCertStoreFile() override {};
-    // The main API
-    virtual bool open(bool write = false) override {
-      _file = SPIFFS.open(_name, write ? "w" : "r");
-      return _file;
-    }
-    virtual bool seek(size_t absolute_pos) override {
-      return _file.seek(absolute_pos, SeekSet);
-    }
-    virtual ssize_t read(void *dest, size_t bytes) override {
-      return _file.readBytes((char*)dest, bytes);
-    }
-    virtual ssize_t write(void *dest, size_t bytes) override {
-      return _file.write((uint8_t*)dest, bytes);
-    }
-    virtual void close() override {
-      _file.close();
-    }
-  private:
-    File _file;
-    const char *_name;
-};
-SPIFFSCertStoreFile certs_idx("/certs.idx");
-SPIFFSCertStoreFile certs_ar("/certs.ar");
-
-
-
-
 ESP8266WebServer server(80);
 
 const uint8_t clockPin = 4;
@@ -63,14 +30,33 @@ uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
 Adafruit_PN532 nfc(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 APA102<dataPin, clockPin> ledStrip;
 
-//const uint16_t ledCount = 1;
-//const uint8_t brightness = 1;
-
-File fsUploadFile;              // a File object to temporarily store the received file
 bool startScanning = false;
 bool noClientConnected= true;
 int numTags; //default number of tags 
 int timezone;
+
+
+
+
+
+void spiffsWrite(String, String);
+String host;
+String IFTTTKey;
+
+String storedTags[MAXNUMTAGS] = {};
+String storedEvents[MAXNUMTAGS] = {};
+String spiffsRead(String);
+void LED_Off();
+void LED_Blue();
+void LED_Red();
+void LED_Green();
+void nfcread();
+void UIDrecord(int);
+void ToggleEvent(String);
+void StoreTagsBeforeStart();
+void send302(String);
+void fetchURL(BearSSL::WiFiClientSecure, const char , const uint16_t, const char );
+
 const char * header = R"(<!DOCTYPE html>
 <html>
 <head>
@@ -81,30 +67,11 @@ const char * header = R"(<!DOCTYPE html>
 <body>
 <div id="top">
   <span id="title">NFC-WiFi</span>
-  <a href="/">Tags</a>
+  <a href="/">Tags/Events</a>
   <a href="/setup">Setup</a>
   <a href="/debug">Debug</a>
-  <a href="/update">Update</a>
 </div>
 )";
-
-
-
-
-void spiffsWrite(String, String);
-String storedTags[MAXNUMTAGS] = {};
-String storedURLs[MAXNUMTAGS] = {};
-String spiffsRead(String);
-int CheckNumCerts();
-void LED_Off();
-void LED_Blue();
-void LED_Red();
-void LED_Green();
-void nfcread();
-void UIDrecord(int);
-void UseURL(String);
-void StoreTagsBeforeStart();
-void send302(String);
 
 void setup()
 { 
@@ -116,8 +83,8 @@ void setup()
   if ( ! SPIFFS.exists("/uid1str") ) {
     spiffsWrite("/uid1str", "Not Set");
   }
-  if ( ! SPIFFS.exists("/url1str") ) {
-    spiffsWrite("/url1str", "Not Set");
+  if ( ! SPIFFS.exists("/event1str") ) {
+    spiffsWrite("/event1str", "Not Set");
   }
   if ( ! SPIFFS.exists("/numTags") ) {
     spiffsWrite("/numTags", String(1));
@@ -128,7 +95,14 @@ void setup()
     spiffsWrite("/timezone", String(-4));
   }
   timezone = spiffsRead("/timezone").toInt();
- 
+  if( ! SPIFFS.exists("/IFTTThost")){
+    spiffsWrite("/IFTTThost", "maker.ifttt.com");
+  }
+  host = spiffsRead("/IFTTThost");
+  if( ! SPIFFS.exists("/IFTTTKEY")){
+    spiffsWrite("/IFTTTKEY", "Not Set");
+  }
+  IFTTTKey = spiffsRead("/IFTTTKEY");
 
   nfc.begin();
 
@@ -145,56 +119,6 @@ void setup()
   nfc.SAMConfig();
   LED_Off();
 
-server.on("/update", HTTP_GET, [&](){
-    String content = header;
-    content += ("<h1>Update</h1><p>Number of certs read from the cert.ar file currently loaded = ");
-
-      content += String(CheckNumCerts());
-
-
-    content += R"(
-      </p><h2>Update cert from a file</h2>
-      <p>Run this python script, and upload the cert.ar file if need be(or you can upload your own if you want)</p>
-      <p>https://github.com/esp8266/Arduino/blob/master/libraries/ESP8266WiFi/examples/BearSSL_CertStore/certs-from-mozilla.py</p>
-      <p>This shouldn't be required, but you never know. If using your own use cert.ar filename</p>
-      <form method='POST' action='/update' enctype='multipart/form-data'>
-        <input type='file' name='update'>
-        <input type='submit' value='Do it'>
-      </form>
-    )";
-
-server.send(200, "text/html", content);
-});
-// handler for the /update form POST (once file upload finishes)
-server.on("/update", HTTP_POST, [&]() {
-  server.sendHeader("Connection", "close");
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-}, [&]() {
-  // handler for the file upload, get's the sketch bytes, and writes
-  // them through the Update object
-  HTTPUpload& upload = server.upload();
-  if (upload.status == UPLOAD_FILE_START) {
-    String filename = upload.filename;
-    if (!filename.startsWith("/")) filename = "/" + filename;
-    Serial.print("handleFileUpload Name: "); Serial.println(filename);
-    fsUploadFile = SPIFFS.open(filename, "w");            // Open the file for writing in SPIFFS (create if it doesn't exist)
-    filename = String();
-  } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (fsUploadFile)
-      fsUploadFile.write(upload.buf, upload.currentSize); // Write the received bytes to the file
-  } else if (upload.status == UPLOAD_FILE_END) {
-    if (fsUploadFile) {                                   // If the file was successfully created
-      fsUploadFile.close();                               // Close the file again
-      Serial.print("handleFileUpload Size: "); Serial.println(upload.totalSize);
-      server.sendHeader("Location", "/success.html");     // Redirect the client to the success page
-      server.send(303);
-    } else {
-      server.send(500, "text/plain", "500: couldn't create file");
-    }
-  }
-  delay(0);
-});
 server.on("/style.css", [&]() {
   server.send(200, "text/css", R"(
       html {
@@ -264,11 +188,9 @@ server.on("/", [&]() {
           <option value="10">10</option>
         </select>
         <button type="submit">Set Tag Number</button>
-
       </form>
      <p>Below is to setup your tags, click the register button and scan a tag</p>
-     <p>once the page reloads(be patient) paste the URL you want to toggle and hit save for each tag </p>
-
+     <p>once the page reloads(be patient) paste the IFTTT event you want to toggle and hit save for each tag </p>
   )";
   for(int i=1;i<numTags+1;i++)
   {
@@ -286,14 +208,14 @@ server.on("/", [&]() {
       </form>       )"; 
         
      content += R"(  
-      <h4>URL )";
+      <h4>Event )";
       content +=String(i);
        content += R"(</h4>
-      <form method='POST' id='URLrec' action='/URLrec'>
+      <form method='POST' id='Eventrec' action='/Eventrec'>
         <input name=")";
                 content += String(i);
          content += R"(" placeholder="Not Set" value=")";
-        content +=spiffsRead("/url"+String(i)+"str");
+        content +=spiffsRead("/event"+String(i));
          content += R"("">
         <button type='submit'>Save</button>
       </form>        
@@ -328,14 +250,16 @@ server.on("/UIDrec", HTTP_POST, [&]() {
   //send302("/");
 });
 
-server.on("/URLrec", HTTP_POST, [&]() {
+server.on("/Eventrec", HTTP_POST, [&]() {
   String tempURLIndex = server.argName(0);
 
-String urlStr =  server.arg(tempURLIndex);
+String EventStr =  server.arg(tempURLIndex);
  
   
-  int urlIndex = tempURLIndex.toInt();
-  spiffsWrite("/url" + String(urlIndex) + "str", urlStr);
+  int EventIndex = tempURLIndex.toInt();
+  Serial.println("event num:"+String(EventIndex));
+  Serial.println("event is:"+EventStr);
+  spiffsWrite("/event" + String(EventIndex), EventStr);
   send302("/");
 });
 
@@ -385,12 +309,26 @@ server.on("/setup", [&]() {
         <button type="submit">Save</button>
       </form>
     )");
+      server.sendContent(String() + R"(
+      <h4>IFTTT Key</h4>
+      <form method="POST" id="setup-device" action="/setup/IFTTTKEY">
+        <input name="iftttkey" placeholder="IFTTTKey" value=")" + spiffsRead("/IFTTTKEY") + R"(">
+        <button type="submit">Save</button>
+      </form>
+    )");
   server.client().stop();
 });
 server.on("/setup/timezone", HTTP_POST, [&]() {
   Serial.print("[httpd] timezone settings post. ");
   spiffsWrite("/timezone", server.arg("tzname"));
   timezone = spiffsRead("/timezone").toInt();
+  send302("/setup?saved");
+  Serial.println("done.");
+});
+server.on("/setup/IFTTTKEY", HTTP_POST, [&]() {
+  Serial.print("[httpd] timezone settings post. ");
+  spiffsWrite("/IFTTTKEY", server.arg("iftttkey"));
+  IFTTTKey = spiffsRead("/IFTTTKEY");
   send302("/setup?saved");
   Serial.println("done.");
 });
@@ -424,7 +362,6 @@ server.on("/version.json", [&]() {
 
 WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
-//setClock();
  
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
@@ -459,9 +396,10 @@ void StoreTagsBeforeStart(){ //read all thags and urls before starting
   noClientConnected =false;
   startScanning = true;
   for(int i=0;i<numTags;i++)
-  {
+  {      
+
       storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
-      storedURLs[i]=spiffsRead("/url"+String(i+1)+"str");
+      storedEvents[i]=spiffsRead("/event"+String(i+1));
   }
 }
 
@@ -497,7 +435,7 @@ void nfcread(){
         if(readuid==storedTags[i])
         {
             LED_Green();
-           UseURL(i);
+           ToggleEvent(i);
           delay(5000);
            LED_Off();
            isMatch = true;
@@ -547,93 +485,71 @@ void UIDrecord(int index_num) {
   delay(10);
 }
 
-
-void UseURL(int url_index)
-{
-   String url = storedURLs[url_index];
-   String url_first4= url.substring(0,5);
-   url_first4.toLowerCase();
-   Serial.println("Attempting to call:"+url);
-   Serial.println("checking http vs https got:"+url_first4);
-   if(url_first4 == "https"){
-   //WiFiManager wifiManager;
-  //if (wifiManager.autoConnect()) 
-  if(WiFi.status() == WL_CONNECTED){
-    Serial.printf("before clock heap size: %u\n", ESP.getFreeHeap());
-    setClock();
-    Serial.printf("after clock heap size: %u\n", ESP.getFreeHeap());
-    //SPIFFS.begin();
-    HTTPClient http;
-    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-    BearSSL::CertStore certStore;
-    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
-    client->setCertStore(&certStore);
-    Serial.println(numCerts);
-    Serial.printf("after cert heap size: %u\n", ESP.getFreeHeap());
-
-    for(int i=0;i<10;i++){
-      http.begin(dynamic_cast<WiFiClient&>(*client), url);
-        Serial.printf("heap size before get: %u\n", ESP.getFreeHeap());
-
-      long httpCode = http.GET();
-      
-      Serial.printf("heap size after get: %u\n", ESP.getFreeHeap());
-      delay(1000);
-      Serial.println(httpCode);
-      Serial.print("result");
-      Serial.println(http.getString());
-      if(httpCode>0)
-        break;
-      delay(100);
-    }
- } else {
-    Serial.println("Failed to connect to Wifi.");
+void fetchURL(BearSSL::WiFiClientSecure *client, const char *host, const uint16_t port, const char *path) {
+  if (!path) {
+    path = "/";
   }
-  Serial.println("done");
-}
-else
-{
-  Serial.println("trying regular http post of:" + url);
-   WiFiClient client;
 
-    HTTPClient http;
-
-    Serial.print("[HTTP] begin...\n");
-    if (http.begin(client, url)) {  // HTTP
-
-
-      Serial.print("[HTTP] GET...\n");
-      // start connection and send HTTP header
-      int httpCode = http.GET();
-
-      // httpCode will be negative on error
-      if (httpCode > 0) {
-        // HTTP header has been send and Server response header has been handled
-        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
-        // file found at server
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-          String payload = http.getString();
-          Serial.println(payload);
-        }
-      } else {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+  ESP.resetFreeContStack();
+  uint32_t freeStackStart = ESP.getFreeContStack();
+  Serial.printf("Trying: %s:443...", host);
+  client->connect(host, port);
+  if (!client->connected()) {
+    Serial.printf("*** Can't connect. ***\n-------\n");
+    return;
+  }
+  Serial.printf("Connected!\n-------\n");
+  client->write("GET ");
+  client->write(path);
+  client->write(" HTTP/1.0\r\nHost: ");
+  client->write(host);
+  client->write("\r\nUser-Agent: ESP8266\r\n");
+  client->write("\r\n");
+  uint32_t to = millis() + 5000;
+  if (client->connected()) {
+    do {
+      char tmp[32];
+      memset(tmp, 0, 32);
+      int rlen = client->read((uint8_t*)tmp, sizeof(tmp) - 1);
+      yield();
+      if (rlen < 0) {
+        break;
       }
-
-      http.end();
-    } else {
-      Serial.printf("[HTTP} Unable to connect\n");
-    }
-
+      // Only print out first line up to \r, then abort connection
+      char *nl = strchr(tmp, '\r');
+      if (nl) {
+        *nl = 0;
+        Serial.print(tmp);
+        break;
+      }
+      Serial.print(tmp);
+    } while (millis() < to);
+  }
+  client->stop();
+  uint32_t freeStackEnd = ESP.getFreeContStack();
+  Serial.printf("\nCONT stack used: %d\n-------\n\n", freeStackStart - freeStackEnd);
 }
+
+
+
+void ToggleEvent(int Event_index)
+{
+   String event = storedEvents[Event_index];
+   
+
+   Serial.println("Attempting to call:"+event);
+
+      WiFi.mode(WIFI_STA);
+ //WiFi.begin(ssid, pass);
+   String url = "/trigger/"+event+"/with/key/"+IFTTTKey;
+  
+
+  BearSSL::WiFiClientSecure client;
+  client.setInsecure();
+  fetchURL(&client, host.c_str(), 443, url.c_str());
+   
 }
 
-int CheckNumCerts(){
-    BearSSL::WiFiClientSecure *client = new BearSSL::WiFiClientSecure();
-    BearSSL::CertStore certStore;
-    int numCerts = certStore.initCertStore(&certs_idx, &certs_ar);
-    return numCerts;
-
-}
 
 void spiffsWrite(String path, String contents) {
   Serial.println("SPIFFS Path:" + path);
