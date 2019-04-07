@@ -1,4 +1,4 @@
-![Here's the board](https://i.imgur.com/lpjVlrc.jpg)
+![Here's the board](https://i.imgur.com/c3flTj5.jpg)
 
 # What is NFC-WiFi?
 It is a NFC reader with WiFi!  
@@ -9,9 +9,9 @@ What can you do with this?
 * Send notification when scanned
 * And much more
 
-...something to note we're not 100% there yet, the hardware is done, now time to catch the
-software upto make those things happen.  
-
+# Videos 
+[Initial setup](https://youtu.be/GJwHEKRzi4o)
+[Opening Front Door](https://www.youtube.com/watch?v=mKFkm8zK5ho)
 
 # Where do I get one?
 Want one? Sign up to preorder one now: [Preorder](https://goo.gl/forms/MPRosQnBkixg8Vhj2)  

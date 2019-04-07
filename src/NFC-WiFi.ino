@@ -169,7 +169,14 @@ server.on("/", [&]() {
   content += R"(
       </select>
       <!-- <button type="submit">Set</button> -->
-      <p>After you've set up the tags you wish to use hit run to start using the NFC-WiFi Board</p>
+      <p>For first use click on Setup and go set your IFTTT webhook key.</p>
+      <p>After you've set up the tags and events you wish to use hit run to start using the NFC-WiFi Board</p>
+      <p>The board will automatically start running when powered up after 2min of no connection to the webpage</p>
+      <h4>IFTTT Key</h4>
+      <form method="POST" id="setup-device" action="/setup/IFTTTKEY">
+        <input name="iftttkey" placeholder="IFTTTKey" value=")" + spiffsRead("/IFTTTKEY") + R"(">
+        <button type="submit">Save</button>
+      </form>
       <form method="POST" id="Run" action="/RunScan">
         <button type="submit">RUN</button>
       </form>    
@@ -189,8 +196,8 @@ server.on("/", [&]() {
         </select>
         <button type="submit">Set Tag Number</button>
       </form>
-     <p>Below is to setup your tags, click the register button and scan a tag</p>
-     <p>once the page reloads(be patient) paste the IFTTT event you want to toggle and hit save for each tag </p>
+     <p>Click the register button and scan a tag once the scanner light goes blue and wait for the page to reload.</p>
+     <p>Once the page reloads(be patient) enter the IFTTT event you want the tag to toggle and hit save.</p>
   )";
   for(int i=1;i<numTags+1;i++)
   {
@@ -309,13 +316,6 @@ server.on("/setup", [&]() {
         <button type="submit">Save</button>
       </form>
     )");
-      server.sendContent(String() + R"(
-      <h4>IFTTT Key</h4>
-      <form method="POST" id="setup-device" action="/setup/IFTTTKEY">
-        <input name="iftttkey" placeholder="IFTTTKey" value=")" + spiffsRead("/IFTTTKEY") + R"(">
-        <button type="submit">Save</button>
-      </form>
-    )");
   server.client().stop();
 });
 server.on("/setup/timezone", HTTP_POST, [&]() {
@@ -329,7 +329,7 @@ server.on("/setup/IFTTTKEY", HTTP_POST, [&]() {
   Serial.print("[httpd] timezone settings post. ");
   spiffsWrite("/IFTTTKEY", server.arg("iftttkey"));
   IFTTTKey = spiffsRead("/IFTTTKEY");
-  send302("/setup?saved");
+  send302("/");
   Serial.println("done.");
 });
 server.on("/setup/device", HTTP_POST, [&]() {
@@ -362,7 +362,9 @@ server.on("/version.json", [&]() {
 
 WiFiManager wifiManager;
 wifiManager.autoConnect("NFC_WiFi");
- 
+WiFi.hostname("NFC-WiFi");
+
+
 server.begin(); // Web server start
 Serial.println("End Of Setup Loop");
 
