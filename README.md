@@ -47,3 +47,9 @@ There are also some diviots to ease in mounting via screws, or you can use doubl
 
 There is a lid that can slide off to allow you to remove the boards from inside. The hole is designed for the USB cable I send with board/enclosures when purchased but should fit most micro-USB cables.  
 ![Enclosure](https://i.imgur.com/oRg27Vw.png)
+
+# Initial setup links
+
+[IFTTT webhooks](https://ifttt.com/maker_webhooks)
+Click Connect
+Then Click Documentation to get your key
