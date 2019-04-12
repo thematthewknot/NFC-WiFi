@@ -16,7 +16,7 @@ What can you do with this?
 
 # Where do I get one?
 Want one? Sign up to preorder one now: [Preorder](https://goo.gl/forms/MPRosQnBkixg8Vhj2)  
-$20+shipping gets you a built/tested/working board, USB cable, Enclosure, All you need to get going.  
+
 
 I have about 2 dozen made and ready to ship currently, but the software isn't done yet.  
 
