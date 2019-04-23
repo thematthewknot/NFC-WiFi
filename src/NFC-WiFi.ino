@@ -10,7 +10,7 @@
 #include <time.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
-
+#include <PubSubClient.h>
 
 ESP8266WebServer server(80);
 
@@ -32,6 +32,7 @@ APA102<dataPin, clockPin> ledStrip;
 
 bool startScanning = false;
 bool noClientConnected= true;
+bool useMQTT = false;
 int numTags; //default number of tags 
 int timezone;
 
@@ -42,10 +43,11 @@ int timezone;
 void spiffsWrite(String, String);
 String host;
 String IFTTTKey;
-
 String storedTags[MAXNUMTAGS] = {};
 String storedEvents[MAXNUMTAGS] = {};
 String spiffsRead(String);
+String MQTTbroker;
+String MQTTtopic;
 void LED_Off();
 void LED_Blue();
 void LED_Red();
@@ -78,8 +80,13 @@ void setup()
   Serial.begin(115200);
   SPIFFS.begin();
   
-
-
+  if ( ! SPIFFS.exists("/useMQTT") ) {
+    spiffsWrite("/useMQTT", "false");
+  }
+  if (spiffsRead("/useMQTT")=="true")
+    useMQTT = true;
+  else
+    useMQTT = false;   
   if ( ! SPIFFS.exists("/uid1str") ) {
     spiffsWrite("/uid1str", "Not Set");
   }
@@ -169,17 +176,31 @@ server.on("/", [&]() {
   content += R"(
       </select>
       <!-- <button type="submit">Set</button> -->
+      <form method="POST" id="Run" action="/RunScan">
+        <button type="submit">RUN</button>
+      </form>  
       <p>For first use click on Setup and go set your IFTTT webhook key.</p>
       <p>After you've set up the tags and events you wish to use hit run to start using the NFC-WiFi Board</p>
       <p>The board will automatically start running when powered up after 2min of no connection to the webpage</p>
+ 
+      <form method="POST" id="useIFTTT" action="/useIFTTT">
+        <button type="submit">Use IFTTT</button>
+      </form>
+      <form method="POST" id="useMQTT" action="/useMQTT">
+        <button type="submit">Use MQTT</button>
+      </form>
+      
+      )";
+
+
+      
+  if(!useMQTT){    
+       content += R"(
       <h4>IFTTT Key</h4>
       <form method="POST" id="setup-device" action="/setup/IFTTTKEY">
         <input name="iftttkey" placeholder="IFTTTKey" value=")" + spiffsRead("/IFTTTKEY") + R"(">
         <button type="submit">Save</button>
-      </form>
-      <form method="POST" id="Run" action="/RunScan">
-        <button type="submit">RUN</button>
-      </form>    
+      </form>  
       <p>Set The number of tags you want to use, then select set tag number</p>
       <form method="POST" id="SetTagNum" action="/setNumTags">
         <select name="numberOfTags">
@@ -227,10 +248,55 @@ server.on("/", [&]() {
         <button type='submit'>Save</button>
       </form>        
     )";
-  
   }
+  }
+  else{
+    content += R"(
+      <h4>MQTT Broker Address</h4>
+      <form method="POST" id="mqtt-address" action="/MQTTBrokerAddress">
+        <input name="mqttbroker" placeholder="MQTTBroker" value=")" + spiffsRead("/MQTTBrokerAddress") + R"(">
+        <button type="submit">Save</button>
+      </form>  
+      <p>Set address of your MQTT broker.</p>
+      <h4>MQTT Topic</h4>
+      <form method="POST" id="mqtt-topic" action="/MQTTtopic">
+        <input name="mqttTopic" placeholder="MQTTtopic" value=")" + spiffsRead("/MQTTtopic") + R"(">
+        <button type="submit">Save</button>
+      </form>  
+      <p>Set The MQTT topic to publish tags ID to.</p>
+      
+  )";
+    
+    
+    
+    }
   
   server.send(200, "text/html", content);
+});
+server.on("/useMQTT", HTTP_POST, [&]() {
+  spiffsWrite("/useMQTT", "true");
+  useMQTT = true;
+  Serial.println("Set to useMQTT");
+  send302("/");
+});
+
+server.on("/useIFTTT", HTTP_POST, [&]() {
+  spiffsWrite("/useMQTT", "false");
+  useMQTT = false;
+  Serial.println("Set to useIFTTT");
+  send302("/");
+});
+server.on("/MQTTBrokerAddress", HTTP_POST, [&]() {
+  spiffsWrite("/MQTTBrokerAddress", server.arg("mqttbroker"));
+  MQTTbroker = spiffsRead("/MQTTBrokerAddress");
+  
+  send302("/");
+});
+server.on("/MQTTtopic", HTTP_POST, [&]() {
+  spiffsWrite("/MQTTtopic", server.arg("mqttTopic"));
+  MQTTtopic =  spiffsRead("/MQTTtopic");
+
+  send302("/");
 });
 server.on("/RunScan", HTTP_POST, [&]() {
    
@@ -404,7 +470,14 @@ void StoreTagsBeforeStart(){ //read all thags and urls before starting
       storedEvents[i]=spiffsRead("/event"+String(i+1));
   }
 }
+void sendMQTTmessage(String UID)
+{
+  WiFiClient espClient;
+  PubSubClient client(espClient);
+   client.setServer(MQTTbroker.c_str(), 1883);
+  client.publish(MQTTtopic.c_str(), UID.c_str());
 
+}
 void nfcread(){
   server.stop();
   WiFi.mode(WIFI_STA);
@@ -422,41 +495,58 @@ void nfcread(){
     //Serial.print("  UID Value: ");   
     //nfc.PrintHex(uid, uidLength);   
     //Serial.println("");
-    String readuid = "";
-    for(int i=0;i<uidLength;i++)
-    {
-      readuid = readuid + uid[i];
-    }
-    Serial.println(readuid);
-   
-    bool isMatch= false;
-    for(int i=0;i<numTags;i++)
-    {
-        //Serial.println("DEBUG list:"+storedTags[i]);
-       
-        if(readuid==storedTags[i])
-        {
-            LED_Green();
-           ToggleEvent(i);
-          delay(5000);
-           LED_Off();
-           isMatch = true;
-          break;
-        }
-               
-    }
-      if(isMatch == false)
+      if(!useMQTT){    
+  
+      String readuid = "";
+      for(int i=0;i<uidLength;i++)
       {
-        LED_Red();
-        delay(3000);
-        LED_Off();
+        readuid = readuid + uid[i];
       }
-
- 
-      
-  }
+      Serial.println(readuid);
+     
+      bool isMatch= false;
+      for(int i=0;i<numTags;i++)
+      {
+          //Serial.println("DEBUG list:"+storedTags[i]);
+         
+          if(readuid==storedTags[i])
+          {
+              LED_Green();
+             ToggleEvent(i);
+            delay(5000);
+             LED_Off();
+             isMatch = true;
+            break;
+          }
+                 
+      }
+        if(isMatch == false)
+        {
+          LED_Red();
+          delay(3000);
+          LED_Off();
+        }
+  
+   
+        
+        }
+        else
+        {
+          String readuid = "";
+          for(int i=0;i<uidLength;i++)
+          {
+            readuid = readuid + uid[i];
+          }
+          Serial.println(readuid);
+          sendMQTTmessage(readuid);
+          delay(10000);
+        }
+        }
+        
+        
   }
 }
+
 
 void UIDrecord(int index_num) {
   LED_Blue();
