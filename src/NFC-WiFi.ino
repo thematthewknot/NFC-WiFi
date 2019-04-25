@@ -21,7 +21,7 @@ const uint8_t dataPin = 5;
 #define PN532_MOSI (12)
 #define PN532_SS   (13)
 #define PN532_MISO (14)
-#define VERSION      1
+#define VERSION      2
 #define MAXNUMTAGS  10 //Max number of tags
 
 
@@ -48,6 +48,9 @@ String storedEvents[MAXNUMTAGS] = {};
 String spiffsRead(String);
 String MQTTbroker;
 String MQTTtopic;
+String MQTTport;
+String MQTTuser;
+String MQTTpass;
 void LED_Off();
 void LED_Blue();
 void LED_Red();
@@ -124,7 +127,7 @@ void setup()
   Serial.print('.'); Serial.println((versiondata>>8) & 0xFF, DEC);
 
   nfc.SAMConfig();
-  LED_Off();
+  LED_Yellow();
 
 server.on("/style.css", [&]() {
   server.send(200, "text/css", R"(
@@ -252,18 +255,28 @@ server.on("/", [&]() {
   }
   else{
     content += R"(
-      <h4>MQTT Broker Address</h4>
-      <form method="POST" id="mqtt-address" action="/MQTTBrokerAddress">
+                  <form method="POST" id="mqtt-address" action="/MQTT">
+
+      <label>MQTT Broker Address</label>
         <input name="mqttbroker" placeholder="MQTTBroker" value=")" + spiffsRead("/MQTTBrokerAddress") + R"(">
-        <button type="submit">Save</button>
+        <br></br>
+       <label>MQTT Port</label>
+        <input name="mqttport" placeholder="1883" value=")" + spiffsRead("/MQTTport") + R"(">
+              <br></br>
+
+      <label>MQTT Topic</label>
+        <input name="mqtttopic" placeholder="MQTTtopic" value=")" + spiffsRead("/MQTTtopic") + R"(">
+                <br></br>
+      <label>MQTT User</label>
+        <input name="mqttuser" placeholder="MQTTuser" value=")" + spiffsRead("/MQTTuser") + R"(">
+                   <br></br>
+      <label>MQTT Password</label>
+        <input name="mqttpass" placeholder="MQTTpass" value=")" + spiffsRead("/MQTTpass") + R"(">
+
+        <button type="submit">Save MQTT info</button>
+     
       </form>  
-      <p>Set address of your MQTT broker.</p>
-      <h4>MQTT Topic</h4>
-      <form method="POST" id="mqtt-topic" action="/MQTTtopic">
-        <input name="mqttTopic" placeholder="MQTTtopic" value=")" + spiffsRead("/MQTTtopic") + R"(">
-        <button type="submit">Save</button>
-      </form>  
-      <p>Set The MQTT topic to publish tags ID to.</p>
+
       
   )";
     
@@ -272,6 +285,24 @@ server.on("/", [&]() {
     }
   
   server.send(200, "text/html", content);
+});
+server.on("/MQTT", HTTP_POST, [&]() {
+  spiffsWrite("/MQTTBrokerAddress", server.arg("mqttbroker"));
+  if(!server.arg("mqttport"))
+    spiffsWrite("/MQTTport", server.arg("1883"));
+    
+  else{
+    spiffsWrite("/MQTTport", server.arg("mqttport"));
+    MQTTpass = server.arg("MQTTpass");
+  }
+  spiffsWrite("/MQTTtopic", server.arg("mqtttopic"));
+  spiffsWrite("/MQTTuser", server.arg("mqttuser"));
+  spiffsWrite("/MQTTpass", server.arg("mqttpass"));
+  MQTTport= server.arg("mqttport");
+  MQTTtopic = server.arg("MQTTtopic");
+  MQTTuser = server.arg("MQTTuser");
+  MQTTpass = server.arg("MQTTpass");
+  send302("/");
 });
 server.on("/useMQTT", HTTP_POST, [&]() {
   spiffsWrite("/useMQTT", "true");
@@ -284,18 +315,6 @@ server.on("/useIFTTT", HTTP_POST, [&]() {
   spiffsWrite("/useMQTT", "false");
   useMQTT = false;
   Serial.println("Set to useIFTTT");
-  send302("/");
-});
-server.on("/MQTTBrokerAddress", HTTP_POST, [&]() {
-  spiffsWrite("/MQTTBrokerAddress", server.arg("mqttbroker"));
-  MQTTbroker = spiffsRead("/MQTTBrokerAddress");
-  
-  send302("/");
-});
-server.on("/MQTTtopic", HTTP_POST, [&]() {
-  spiffsWrite("/MQTTtopic", server.arg("mqttTopic"));
-  MQTTtopic =  spiffsRead("/MQTTtopic");
-
   send302("/");
 });
 server.on("/RunScan", HTTP_POST, [&]() {
@@ -469,11 +488,42 @@ void StoreTagsBeforeStart(){ //read all thags and urls before starting
       storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
       storedEvents[i]=spiffsRead("/event"+String(i+1));
   }
+  LED_Off();
 }
 void sendMQTTmessage(String UID)
 {
-  WiFiClient espClient;
+
+  
+  WiFi.mode(WIFI_STA);
+
+  BearSSL::WiFiClientSecure espClient;
+  
   PubSubClient client(espClient);
+  if (!client.connected()) {
+   // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str(),MQTTuser.c_str(),MQTTpass.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("outTopic", "hello world");
+      // ... and resubscribe
+      client.subscribe("inTopic");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+  }
+
+  
    client.setServer(MQTTbroker.c_str(), 1883);
   client.publish(MQTTtopic.c_str(), UID.c_str());
 
@@ -673,6 +723,12 @@ void LED_Red()
 {
   ledStrip.startFrame();
   ledStrip.sendColor(255, 0, 0, 1);
+  ledStrip.endFrame(1);
+}
+void LED_Yellow()
+{
+  ledStrip.startFrame();
+  ledStrip.sendColor(255, 255, 0, 1);
   ledStrip.endFrame(1);
 }
 void LED_Off()
