@@ -13,6 +13,8 @@
 #include <PubSubClient.h>
 
 ESP8266WebServer server(80);
+WiFiClient espClient;
+PubSubClient mqttclient(espClient);
 
 const uint8_t clockPin = 4;
 const uint8_t dataPin = 5;
@@ -87,7 +89,7 @@ void setup()
     spiffsWrite("/useMQTT", "false");
   }
   if (spiffsRead("/useMQTT")=="true")
-    useMQTT = true;
+      useMQTT = true;   
   else
     useMQTT = false;   
   if ( ! SPIFFS.exists("/uid1str") ) {
@@ -298,10 +300,6 @@ server.on("/MQTT", HTTP_POST, [&]() {
   spiffsWrite("/MQTTtopic", server.arg("mqtttopic"));
   spiffsWrite("/MQTTuser", server.arg("mqttuser"));
   spiffsWrite("/MQTTpass", server.arg("mqttpass"));
-  MQTTport= server.arg("mqttport");
-  MQTTtopic = server.arg("MQTTtopic");
-  MQTTuser = server.arg("MQTTuser");
-  MQTTpass = server.arg("MQTTpass");
   send302("/");
 });
 server.on("/useMQTT", HTTP_POST, [&]() {
@@ -482,51 +480,42 @@ void loop() {
 void StoreTagsBeforeStart(){ //read all thags and urls before starting 
   noClientConnected =false;
   startScanning = true;
+  if(useMQTT){    
+    MQTTbroker= spiffsRead("/MQTTBrokerAddress");
+    MQTTport= spiffsRead("/MQTTport");
+    MQTTtopic = spiffsRead("/MQTTtopic");
+    MQTTuser = spiffsRead("/MQTTuser");
+    MQTTpass = spiffsRead("/MQTTpass");
+
+  }
+  else{
   for(int i=0;i<numTags;i++)
   {      
 
       storedTags[i]=spiffsRead("/uid"+String(i+1)+"str");
       storedEvents[i]=spiffsRead("/event"+String(i+1));
   }
+  }
   LED_Off();
+
+  
 }
 void sendMQTTmessage(String UID)
 {
 
-  
-  WiFi.mode(WIFI_STA);
+  LED_Green();
 
-  BearSSL::WiFiClientSecure espClient;
-  
-  PubSubClient client(espClient);
-  if (!client.connected()) {
-   // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str(),MQTTuser.c_str(),MQTTpass.c_str())) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      client.publish("outTopic", "hello world");
-      // ... and resubscribe
-      client.subscribe("inTopic");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
+
+  mqttclient.setServer(MQTTbroker.c_str(), MQTTport.toInt());
+  while(!mqttclient.connected())
+  {
+    
+    mqttclient.connect("NFC-WiFi",MQTTuser.c_str(),MQTTpass.c_str());
+    delay(2000);
   }
 
-  
-   client.setServer(MQTTbroker.c_str(), 1883);
-  client.publish(MQTTtopic.c_str(), UID.c_str());
-
+  mqttclient.publish(MQTTtopic.c_str(), UID.c_str());
+  LED_Off();
 }
 void nfcread(){
   server.stop();
