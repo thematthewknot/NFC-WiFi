@@ -503,7 +503,7 @@ void StoreTagsBeforeStart(){ //read all thags and urls before starting
 void sendMQTTmessage(String UID)
 {
 
-  LED_Green();
+ // LED_Green();
 
 
   mqttclient.setServer(MQTTbroker.c_str(), MQTTport.toInt());
@@ -511,11 +511,11 @@ void sendMQTTmessage(String UID)
   {
     
     mqttclient.connect("NFC-WiFi",MQTTuser.c_str(),MQTTpass.c_str());
-    delay(2000);
+    delay(1500);
   }
 
   mqttclient.publish(MQTTtopic.c_str(), UID.c_str());
-  LED_Off();
+ // LED_Off();
 }
 void nfcread(){
   server.stop();
@@ -577,8 +577,10 @@ void nfcread(){
             readuid = readuid + uid[i];
           }
           Serial.println(readuid);
+          LED_Green();
           sendMQTTmessage(readuid);
-          delay(10000);
+          delay(5000);
+          LED_Off();
         }
         }
         
