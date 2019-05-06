@@ -15,14 +15,8 @@ What can you do with this?
 [Opening Front Door](https://www.youtube.com/watch?v=mKFkm8zK5ho)
 
 # Where do I get one?
-Want one? Sign up to preorder one now: [Preorder](https://goo.gl/forms/MPRosQnBkixg8Vhj2)  
 
-
-I have about 2 dozen made and ready to ship currently, but the software isn't done yet.  
-
-If you want one and aren't afraid of getting dirty in the code let me know in the comments of the sign up and I'll gladly send you one.  
-
-If you just want it to work sign up for the waiting list and once we're up and going I'll reach out to you.  
+They are now for sale on my tindie: [Get yours here](https://www.tindie.com/products/thematthewknot/nfc-wifi-board/)
 
 # Hardware used
 * PN532 Board
