@@ -9,6 +9,9 @@ What can you do with this?
 * Send notification when scanned
 * And much more
 
+# Getting started
+Go check out the getting started [tutorials](https://www.mattvarian.com/nfc-wifi)
+
 # Videos 
 [Initial setup](https://youtu.be/GJwHEKRzi4o)
 

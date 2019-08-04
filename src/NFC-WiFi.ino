@@ -1,7 +1,8 @@
 // NFC-WiFi board simple program 2018 Matt Varian
 // https://github.com/thematthewknot/NFC-WiFi
 // released under the GPLv3 license.
-#include <FS.h>
+//#include <FS.h>
+#include <LittleFS.h>
 #include <ESP8266WiFi.h> 
 #include <ESP8266HTTPClient.h>
 #include <WiFiManager.h>
@@ -23,7 +24,7 @@ const uint8_t dataPin = 5;
 #define PN532_MOSI (12)
 #define PN532_SS   (13)
 #define PN532_MISO (14)
-#define VERSION      2
+#define VERSION      3
 #define MAXNUMTAGS  10 //Max number of tags
 
 
@@ -37,9 +38,6 @@ bool noClientConnected= true;
 bool useMQTT = false;
 int numTags; //default number of tags 
 int timezone;
-
-
-
 
 
 void spiffsWrite(String, String);
@@ -58,7 +56,7 @@ void LED_Blue();
 void LED_Red();
 void LED_Green();
 void nfcread();
-void UIDrecord(int);
+String UIDrecord();
 void ToggleEvent(String);
 void StoreTagsBeforeStart();
 void send302(String);
@@ -82,36 +80,37 @@ const char * header = R"(<!DOCTYPE html>
 
 void setup()
 { 
-  Serial.begin(115200);
-  SPIFFS.begin();
   
-  if ( ! SPIFFS.exists("/useMQTT") ) {
+  Serial.begin(115200);
+  //SPIFFS.begin();
+  LittleFS.begin();
+  if ( ! LittleFS.exists("/useMQTT") ) {
     spiffsWrite("/useMQTT", "false");
   }
   if (spiffsRead("/useMQTT")=="true")
       useMQTT = true;   
   else
     useMQTT = false;   
-  if ( ! SPIFFS.exists("/uid1str") ) {
+  if ( ! LittleFS.exists("/uid1str") ) {
     spiffsWrite("/uid1str", "Not Set");
   }
-  if ( ! SPIFFS.exists("/event1str") ) {
+  if ( ! LittleFS.exists("/event1str") ) {
     spiffsWrite("/event1str", "Not Set");
   }
-  if ( ! SPIFFS.exists("/numTags") ) {
+  if ( ! LittleFS.exists("/numTags") ) {
     spiffsWrite("/numTags", String(1));
   }
   numTags = spiffsRead("/numTags").toInt();
 
-  if( ! SPIFFS.exists("/timezone")){
+  if( ! LittleFS.exists("/timezone")){
     spiffsWrite("/timezone", String(-4));
   }
   timezone = spiffsRead("/timezone").toInt();
-  if( ! SPIFFS.exists("/IFTTThost")){
+  if( ! LittleFS.exists("/IFTTThost")){
     spiffsWrite("/IFTTThost", "maker.ifttt.com");
   }
   host = spiffsRead("/IFTTThost");
-  if( ! SPIFFS.exists("/IFTTTKEY")){
+  if( ! LittleFS.exists("/IFTTTKEY")){
     spiffsWrite("/IFTTTKEY", "Not Set");
   }
   IFTTTKey = spiffsRead("/IFTTTKEY");
@@ -130,6 +129,8 @@ void setup()
 
   nfc.SAMConfig();
   LED_Yellow();
+
+server.setContentLength(CONTENT_LENGTH_UNKNOWN);
 
 server.on("/style.css", [&]() {
   server.send(200, "text/css", R"(
@@ -169,7 +170,7 @@ server.on("/style.css", [&]() {
       }
     )");
 });
-server.on("/", [&]() {
+server.on("/", HTTP_GET,[&]() {
 
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
@@ -183,7 +184,8 @@ server.on("/", [&]() {
       <!-- <button type="submit">Set</button> -->
       <form method="POST" id="Run" action="/RunScan">
         <button type="submit">RUN</button>
-      </form>  
+      </form>
+      <p>Go to www.nfc-wifi.com for more info.</p>  
       <p>For first use click on Setup and go set your IFTTT webhook key.</p>
       <p>After you've set up the tags and events you wish to use hit run to start using the NFC-WiFi Board</p>
       <p>The board will automatically start running when powered up after 2min of no connection to the webpage</p>
@@ -222,23 +224,24 @@ server.on("/", [&]() {
         </select>
         <button type="submit">Set Tag Number</button>
       </form>
-     <p>Click the register button and scan a tag once the scanner light goes blue and wait for the page to reload.</p>
-     <p>Once the page reloads(be patient) enter the IFTTT event you want the tag to toggle and hit save.</p>
+     <p>Click the register button and scan a tag once the scanner light goes blue.</p>
+     <p>Once the light goes back to yellow refresh the page.</p>
   )";
   for(int i=1;i<numTags+1;i++)
   {
     content += R"(
      <h4>Tag )";
-        content += String(i);  
+        content +=String(i);  
         content += R"(</h4>
-      <form method="POST" id="UIDrec" action="/UIDrec">
+      <form method='POST' id='UIDrec' action='/UIDrec'>
         <input name=")";
         content += String(i);
         content += R"(" placeholder="Not Set" value=")";
-        content += spiffsRead("/uid"+String(i)+"str");
+        content +=spiffsRead("/uid"+String(i)+"str");
         content += R"("">
-        <button type="submit">Register</button>
-      </form>       )"; 
+        <button type='submit'>Register</button>
+      </form>       
+      )"; 
         
      content += R"(  
       <h4>Event )";
@@ -331,15 +334,6 @@ server.on("/setNumTags", HTTP_POST, [&]() {
 
     
 });
-server.on("/UIDrec", HTTP_POST, [&]() {
-  String tempUIDIndex = server.argName(0);
-  int uidindex = tempUIDIndex.toInt();
-  UIDrecord(uidindex);
-  server.sendHeader("Location", "/", true);
-  server.send ( 302, "text/plain", "");
-  //send302("/");
-});
-
 server.on("/Eventrec", HTTP_POST, [&]() {
   String tempURLIndex = server.argName(0);
 
@@ -352,6 +346,23 @@ String EventStr =  server.arg(tempURLIndex);
   spiffsWrite("/event" + String(EventIndex), EventStr);
   send302("/");
 });
+
+server.on("/UIDrec", HTTP_POST, [&]() {
+  String tempUIDIndex = server.argName(0);
+  String tempstr = "";
+
+  tempstr = UIDrecord();
+
+  spiffsWrite("/uid" + tempUIDIndex + "str", tempstr);
+  //send302("/");
+  //server.sendHeader("Location", "/", true);
+  //server.sendHeader("Location","/");
+  //server.send(303);
+  ESP.restart();
+  //server.send ( 302, "text/plain", "/");
+  
+});
+
 
 
 server.on("/setup", [&]() {
@@ -589,7 +600,7 @@ void nfcread(){
 }
 
 
-void UIDrecord(int index_num) {
+String UIDrecord() {
   LED_Blue();
   uint8_t success;
   uint8_t uidLength;
@@ -600,24 +611,25 @@ void UIDrecord(int index_num) {
 
     if (success) {
       waitforread = false;
-      Serial.println("Found an ISO14443A card");
-      Serial.print("  UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
-      Serial.print("  UID Value: ");
-      nfc.PrintHex(uid, uidLength);
-      Serial.println(" saving to UID slot: " + index_num);
-      Serial.println("*************");
+      //Serial.println("Found an ISO14443A card");
+      //Serial.print("  UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
+     // Serial.print("  UID Value: ");
+      //nfc.PrintHex(uid, uidLength);
+      //Serial.println(" saving to UID slot: " + index_num);
+      //Serial.println("*************");
       for (int i = 0; i < uidLength; i++)
         tempstr = tempstr + uid[i];
-      Serial.print("using index:");
-      Serial.println(index_num);
-      spiffsWrite("/uid" + String(index_num) + "str", tempstr);
-
+      //Serial.print("using index:");
+     //Serial.println(index_num);
+      
+      
     }
   }
   LED_Off();
-  delay(10);
+  //LED_Yellow();
+  return tempstr;
+  //delay(1);
 }
-
 void fetchURL(BearSSL::WiFiClientSecure *client, const char *host, const uint16_t port, const char *path) {
   if (!path) {
     path = "/";
@@ -685,14 +697,15 @@ void ToggleEvent(int Event_index)
 
 
 void spiffsWrite(String path, String contents) {
-  Serial.println("SPIFFS Path:" + path);
-  Serial.println("SPIFFS contents:" + contents);
-  File f = SPIFFS.open(path, "w");
+  //Serial.println("SPIFFS Path:" + path);
+  //Serial.println("SPIFFS contents:" + contents);
+  File f = LittleFS.open(path, "w");
   f.print(contents);
   f.close();
 }
 String spiffsRead(String path) {
-  File f = SPIFFS.open(path, "r");
+  //Serial.println("reading:" + path);
+  File f = LittleFS.open(path, "r");
   String x = f.readStringUntil('\n');
   f.close();
   return x;
